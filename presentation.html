@@ -1,0 +1,1246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:,">
+  <title>Assignment 1 · QEC data pipeline for AI</title>
+  <style>
+    :root {
+      --ink: #14252f;
+      --muted: #5d707b;
+      --paper: #f5f7f6;
+      --white: #ffffff;
+      --line: #d7e1e4;
+      --blue: #1769c2;
+      --blue-soft: #e8f2fc;
+      --teal: #07878b;
+      --teal-soft: #e4f5f3;
+      --violet: #6e55bd;
+      --violet-soft: #efebff;
+      --amber: #c98900;
+      --amber-soft: #fff3d5;
+      --red: #c94d55;
+      --red-soft: #fdebed;
+      --green: #337d5d;
+      --green-soft: #e7f5ed;
+      --shadow: 0 18px 50px rgba(20, 37, 47, 0.10);
+      --shadow-soft: 0 10px 30px rgba(20, 37, 47, 0.07);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      color: var(--ink);
+      background: #dce5e8;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 18px;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, a { font: inherit; }
+    a { color: inherit; }
+
+    .deck { position: fixed; inset: 0; overflow: hidden; background: var(--paper); }
+    .deck::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(23, 105, 194, .10) .7px, transparent .7px);
+      background-size: 22px 22px;
+      opacity: .34;
+      pointer-events: none;
+    }
+    .slide {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: clamp(14px, 2.2vh, 24px);
+      padding: clamp(34px, 5vh, 56px) clamp(42px, 5.3vw, 82px) clamp(72px, 10vh, 92px);
+      overflow: hidden;
+      visibility: hidden;
+      opacity: 0;
+      transform: translateX(34px) scale(.992);
+      pointer-events: none;
+      transition: opacity .34s ease, transform .42s cubic-bezier(.2,.8,.2,1), visibility 0s linear .42s;
+      background:
+        radial-gradient(circle at 92% 7%, rgba(110, 85, 189, .10), transparent 23%),
+        radial-gradient(circle at 3% 92%, rgba(7, 135, 139, .08), transparent 22%),
+        linear-gradient(135deg, rgba(255,255,255,.96), rgba(245,247,246,.95));
+    }
+    .slide.active {
+      visibility: visible;
+      opacity: 1;
+      transform: translateX(0) scale(1);
+      pointer-events: auto;
+      transition-delay: 0s;
+    }
+    .slide.leaving { transform: translateX(-24px) scale(.994); }
+    .slide::after {
+      content: attr(data-section);
+      position: absolute;
+      top: 4.9vh;
+      right: 5.3vw;
+      color: rgba(20, 37, 47, .23);
+      font-size: clamp(11px, .92vw, 15px);
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+    .slide.no-section-label::after { display: none; }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    .slide.active .reveal {
+      animation: reveal .55s cubic-bezier(.2,.8,.2,1) forwards;
+      animation-delay: calc(var(--order, 0) * 85ms + 90ms);
+    }
+    @keyframes reveal { to { opacity: 1; transform: translateY(0); } }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--blue);
+      font-size: clamp(12px, 1.05vw, 17px);
+      font-weight: 850;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 12.5em;
+      margin-bottom: 16px;
+      font-size: clamp(46px, 5.5vw, 80px);
+      line-height: .98;
+      letter-spacing: -.048em;
+    }
+    h2 {
+      max-width: 20em;
+      margin-bottom: 0;
+      font-size: clamp(34px, 3.45vw, 53px);
+      line-height: 1.02;
+      letter-spacing: -.04em;
+    }
+    h3 {
+      margin-bottom: 8px;
+      font-size: clamp(19px, 1.55vw, 26px);
+      line-height: 1.12;
+    }
+    p { line-height: 1.42; }
+    .lead {
+      max-width: 48em;
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: clamp(19px, 1.6vw, 26px);
+      line-height: 1.42;
+    }
+    .small { color: var(--muted); font-size: clamp(13px, 1.05vw, 17px); }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    .accent { color: var(--blue); }
+    .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; }
+
+    .badge, .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .badge {
+      padding: 10px 15px;
+      color: #4d3d93;
+      border: 1px solid #d5ccf4;
+      background: var(--violet-soft);
+      font-size: clamp(12px, .98vw, 16px);
+    }
+    .tag { padding: 7px 11px; color: #50636d; background: #edf2f3; font-size: .78em; }
+
+    .title-layout {
+      display: grid;
+      grid-template-columns: 1.12fr .88fr;
+      align-items: center;
+      gap: 5vw;
+      flex: 1;
+      min-height: 0;
+    }
+    .title-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+    .title-meta span {
+      padding: 9px 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.78);
+      color: var(--muted);
+      font-weight: 750;
+      font-size: clamp(13px, 1vw, 17px);
+    }
+    .hero-orbit {
+      position: relative;
+      min-height: min(59vh, 530px);
+      border: 1px solid #d9d3ef;
+      border-radius: 34px;
+      background: rgba(255,255,255,.83);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .orbit-ring {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 63%; aspect-ratio: 1;
+      border: 2px solid rgba(23,105,194,.18);
+      border-radius: 50%;
+      transform: translate(-50%,-50%);
+    }
+    .orbit-ring.r2 { width: 42%; border-color: rgba(7,135,139,.24); }
+    .orbit-core {
+      position: absolute;
+      left: 50%; top: 50%;
+      display: grid;
+      width: 26%; aspect-ratio: 1;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: var(--violet);
+      transform: translate(-50%,-50%);
+      box-shadow: 0 16px 34px rgba(110,85,189,.28);
+      font-size: clamp(24px, 2.5vw, 42px);
+      font-weight: 900;
+    }
+    .orbit-node {
+      position: absolute;
+      display: grid;
+      width: clamp(76px, 7.2vw, 112px);
+      aspect-ratio: 1;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: white;
+      box-shadow: var(--shadow-soft);
+      color: var(--muted);
+      font-weight: 850;
+      animation: nodeFloat 4.4s ease-in-out infinite;
+    }
+    .orbit-node b { display: block; color: var(--ink); font-size: 1.4em; text-align: center; }
+    .orbit-node small { display: block; font-size: .72em; font-weight: 750; }
+    .orbit-node.n1 { left: 7%; top: 12%; }
+    .orbit-node.n2 { right: 8%; top: 17%; animation-delay: -1.2s; }
+    .orbit-node.n3 { left: 11%; bottom: 10%; animation-delay: -2.4s; }
+    .orbit-node.n4 { right: 9%; bottom: 9%; animation-delay: -3.2s; }
+    @keyframes nodeFloat { 50% { transform: translateY(-8px); } }
+
+    .problem-layout {
+      display: grid;
+      grid-template-columns: .9fr 1.1fr;
+      gap: 3.4vw;
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .problem-list { display: grid; gap: 14px; align-content: center; }
+    .problem-item {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 15px;
+      align-items: center;
+      padding: 15px 17px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.86);
+    }
+    .problem-item span:first-child {
+      display: grid; width: 42px; height: 42px; place-items: center;
+      border-radius: 13px; color: var(--blue); background: var(--blue-soft); font-weight: 900;
+    }
+    .problem-item p { margin: 0; color: var(--muted); font-size: clamp(14px, 1.1vw, 18px); }
+    .problem-item strong { display: block; color: var(--ink); font-size: 1.08em; }
+    .mission-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 4vh 3vw;
+      border-radius: 30px;
+      color: white;
+      background: #173a54;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .mission-card::after {
+      content: "";
+      position: absolute;
+      width: 320px; height: 320px; right: -130px; bottom: -150px;
+      border: 55px solid rgba(255,255,255,.06); border-radius: 50%;
+    }
+    .mission-card .eyebrow { color: #8fd7e1; }
+    .mission-card h3 { max-width: 13em; font-size: clamp(29px, 3vw, 48px); letter-spacing: -.035em; }
+    .mission-card p { max-width: 34em; margin-bottom: 0; color: #d3e3ea; font-size: clamp(17px, 1.35vw, 22px); }
+    .mission-arrow { margin-top: 25px; color: #8fd7e1; font-size: 1.1em; font-weight: 850; }
+
+    .qec-layout {
+      display: grid;
+      grid-template-columns: .78fr 1.22fr;
+      gap: 3vw;
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .analogy-stack { display: grid; gap: 13px; align-content: center; }
+    .analogy {
+      padding: 15px 17px;
+      border-left: 5px solid var(--teal);
+      border-radius: 5px 18px 18px 5px;
+      background: rgba(255,255,255,.88);
+      box-shadow: var(--shadow-soft);
+    }
+    .analogy:nth-child(2) { border-color: var(--blue); }
+    .analogy:nth-child(3) { border-color: var(--violet); }
+    .analogy strong { display: block; margin-bottom: 4px; }
+    .analogy p { margin: 0; color: var(--muted); font-size: clamp(14px, 1.08vw, 18px); }
+    .qec-demo {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 22px 24px 17px;
+      border: 1px solid #d6dfeb;
+      border-radius: 28px;
+      background: rgba(255,255,255,.91);
+      box-shadow: var(--shadow);
+    }
+    .demo-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .demo-label { color: var(--muted); font-size: .8em; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+    .replay {
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: white;
+      cursor: pointer;
+      font-size: .8em;
+      font-weight: 800;
+    }
+    .replay:hover, .replay:focus-visible { border-color: var(--blue); color: var(--blue); outline: none; }
+    .qubit-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 13%;
+      margin: 28px 5% 22px;
+    }
+    .qubit-row::before {
+      content: "";
+      position: absolute;
+      left: 8%; right: 8%; top: 50%;
+      height: 3px; background: #dbe4e8; transform: translateY(-50%); z-index: 0;
+    }
+    .qubit {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      min-height: 88px;
+      place-items: center;
+      border: 3px solid #9eb2bc;
+      border-radius: 24px;
+      background: #f9fbfb;
+      font-size: clamp(17px, 1.4vw, 23px);
+      font-weight: 900;
+      transition: border-color .35s ease, background .35s ease, transform .35s ease;
+    }
+    .qubit small { display: block; margin-top: 4px; color: var(--muted); font-size: .62em; font-weight: 700; }
+    .fault {
+      position: absolute;
+      top: -13px; right: -10px;
+      display: grid; width: 35px; height: 35px; place-items: center;
+      border-radius: 50%; color: white; background: var(--red); box-shadow: 0 8px 18px rgba(201,77,85,.28);
+      opacity: 0; transform: scale(.4) rotate(-25deg); transition: .35s ease;
+    }
+    .qec-demo[data-step="1"] .qubit.q1,
+    .qec-demo[data-step="2"] .qubit.q1,
+    .qec-demo[data-step="3"] .qubit.q1 { border-color: var(--red); background: var(--red-soft); transform: translateY(-4px); }
+    .qec-demo[data-step="1"] .fault,
+    .qec-demo[data-step="2"] .fault,
+    .qec-demo[data-step="3"] .fault { opacity: 1; transform: scale(1) rotate(0); }
+    .check-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .check {
+      padding: 13px 14px;
+      border: 2px solid #cbd7dc;
+      border-radius: 17px;
+      color: var(--muted);
+      background: #f7f9fa;
+      text-align: center;
+      font-weight: 800;
+      transition: .35s ease;
+    }
+    .check code { display: block; margin-top: 4px; color: inherit; font-size: .85em; }
+    .qec-demo[data-step="2"] .check,
+    .qec-demo[data-step="3"] .check {
+      border-color: #d6ad38; color: #7d5a00; background: var(--amber-soft); transform: translateY(-3px);
+      box-shadow: 0 8px 20px rgba(201,137,0,.12);
+    }
+    .decoder-result {
+      margin-top: 16px;
+      padding: 13px 15px;
+      border-radius: 16px;
+      color: #4c3f87;
+      background: var(--violet-soft);
+      font-weight: 800;
+      opacity: .48;
+      transition: .35s ease;
+    }
+    .qec-demo[data-step="3"] .decoder-result { opacity: 1; transform: scale(1.015); }
+    .demo-caption {
+      min-height: 46px;
+      margin: auto 0 0;
+      padding-top: 14px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: clamp(14px, 1.08vw, 18px);
+    }
+
+    .signal-flow {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 34px;
+      flex: 1;
+      min-height: 0;
+      align-items: center;
+    }
+    .signal-flow::before {
+      content: "";
+      position: absolute;
+      left: 8%; right: 8%; top: 49%;
+      height: 5px;
+      border-radius: 4px;
+      background: #d8e2e6;
+      z-index: 0;
+    }
+    .signal-token {
+      position: absolute;
+      z-index: 1;
+      left: 8%; top: calc(49% - 7px);
+      width: 19px; height: 19px;
+      border: 4px solid white;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 5px rgba(23,105,194,.16);
+      animation: signalMove 6s ease-in-out infinite;
+    }
+    @keyframes signalMove { 0%,8% { left: 8%; } 28% { left: 34%; } 53% { left: 59%; } 78%,100% { left: 84%; } }
+    .flow-card {
+      position: relative;
+      z-index: 2;
+      min-height: 220px;
+      padding: 24px 20px;
+      border: 1px solid var(--line);
+      border-top: 7px solid var(--blue);
+      border-radius: 23px;
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow-soft);
+    }
+    .flow-card:nth-of-type(2) { border-top-color: var(--teal); }
+    .flow-card:nth-of-type(3) { border-top-color: var(--violet); }
+    .flow-card:nth-of-type(4) { border-top-color: var(--amber); }
+    .flow-index {
+      display: grid; width: 38px; height: 38px; margin-bottom: 17px; place-items: center;
+      border-radius: 12px; color: var(--blue); background: var(--blue-soft); font-weight: 900;
+    }
+    .flow-card p { margin: 0; color: var(--muted); font-size: clamp(14px, 1.02vw, 17px); }
+    .truth-strip, .note-strip {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 14px 18px;
+      border: 1px solid #d4dfef;
+      border-radius: 17px;
+      color: #315774;
+      background: var(--blue-soft);
+    }
+    .truth-strip strong, .note-strip strong { white-space: nowrap; }
+    .truth-strip span, .note-strip span { color: var(--muted); }
+
+    .record-layout {
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 3vw;
+      flex: 1;
+      min-height: 0;
+      align-items: center;
+    }
+    .record-card {
+      padding: 26px;
+      border: 1px solid #d8e1e5;
+      border-radius: 26px;
+      background: #172934;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .record-file { margin-bottom: 17px; color: #93a8b4; font-size: .75em; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .record-code {
+      display: grid;
+      grid-template-columns: .7fr 3.1fr .9fr;
+      gap: 8px;
+      align-items: stretch;
+      color: #eef7f8;
+      font-size: clamp(14px, 1.08vw, 19px);
+      white-space: nowrap;
+    }
+    .record-field { padding: 18px 13px; border-radius: 12px; text-align: center; }
+    .record-field.label { background: rgba(120,181,255,.19); }
+    .record-field.syndrome { background: rgba(86,206,190,.16); }
+    .record-field.quantity { background: rgba(255,201,82,.18); }
+    .record-names {
+      display: grid;
+      grid-template-columns: .7fr 3.1fr .9fr;
+      gap: 8px;
+      margin-top: 10px;
+      color: #9db1bb;
+      font-size: clamp(11px, .83vw, 14px);
+      text-align: center;
+    }
+    .record-pointers { display: grid; gap: 13px; }
+    .pointer {
+      padding: 15px 17px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.88);
+      box-shadow: var(--shadow-soft);
+    }
+    .pointer strong { display: block; margin-bottom: 3px; }
+    .pointer p { margin: 0; color: var(--muted); font-size: clamp(14px, 1.05vw, 17px); }
+    .weight-warning { color: #775600; background: var(--amber-soft); border-color: #eed49b; }
+
+    .dataset-grid, .model-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.6vw;
+      flex: 1;
+      min-height: 0;
+    }
+    .dataset-card, .model-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 24px 22px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255,255,255,.91);
+      box-shadow: var(--shadow-soft);
+    }
+    .dataset-card:nth-child(1), .model-card:nth-child(1) { border-top: 7px solid var(--violet); }
+    .dataset-card:nth-child(2), .model-card:nth-child(2) { border-top: 7px solid var(--teal); }
+    .dataset-card:nth-child(3), .model-card:nth-child(3) { border-top: 7px solid var(--amber); }
+    .dataset-mark, .model-mark {
+      display: grid; width: 48px; height: 48px; margin-bottom: 18px; place-items: center;
+      border-radius: 15px; color: var(--violet); background: var(--violet-soft); font-weight: 900;
+    }
+    .dataset-card:nth-child(2) .dataset-mark, .model-card:nth-child(2) .model-mark { color: var(--teal); background: var(--teal-soft); }
+    .dataset-card:nth-child(3) .dataset-mark, .model-card:nth-child(3) .model-mark { color: #8b6400; background: var(--amber-soft); }
+    .dataset-card p, .model-card p { color: var(--muted); font-size: clamp(14px, 1.05vw, 18px); }
+    .plain-list { margin: 0; padding-left: 1.15em; line-height: 1.42; font-size: clamp(14px, 1.03vw, 17px); }
+    .plain-list li + li { margin-top: .45em; }
+    .dataset-card .tag, .model-card .tag { align-self: flex-start; margin-top: auto; }
+
+    .split-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2vw;
+      flex: 1;
+      min-height: 0;
+    }
+    .part-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 26px 25px;
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background: rgba(255,255,255,.91);
+      box-shadow: var(--shadow-soft);
+    }
+    .part-panel.part-one { border-top: 8px solid var(--teal); }
+    .part-panel.part-two { border-top: 8px solid var(--violet); }
+    .part-percent { color: var(--teal); font-size: clamp(45px, 5.2vw, 74px); font-weight: 900; letter-spacing: -.055em; }
+    .part-two .part-percent { color: var(--violet); }
+    .part-panel p { color: var(--muted); }
+    .part-panel .tag { align-self: flex-start; margin-top: auto; }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: white;
+    }
+    .week { padding: 12px 14px; border-right: 1px solid var(--line); }
+    .week:last-child { border-right: 0; }
+    .week strong { display: block; color: var(--blue); font-size: .8em; text-transform: uppercase; letter-spacing: .08em; }
+    .week span { color: var(--muted); font-size: .83em; }
+    .schedule-slide .split-layout { gap: 1.45vw; }
+    .schedule-slide .part-panel { padding: 20px 22px; }
+    .schedule-slide .part-percent { font-size: clamp(39px, 4.5vw, 64px); }
+    .schedule-footer { display: grid; gap: 9px; }
+    .milestone-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .milestone {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.94);
+    }
+    .milestone-mark {
+      display: grid;
+      flex: 0 0 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      font-weight: 900;
+    }
+    .milestone:nth-child(2) .milestone-mark { color: #806000; background: var(--amber-soft); }
+    .milestone:nth-child(3) .milestone-mark { color: var(--violet); background: var(--violet-soft); }
+    .milestone span { min-width: 0; color: var(--muted); font-size: clamp(12px, .87vw, 15px); }
+    .milestone strong { display: block; color: var(--ink); font-size: 1.04em; }
+
+    .architecture-frame {
+      position: relative;
+      display: grid;
+      flex: 1;
+      min-height: 0;
+      place-items: center;
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 27px;
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .architecture-frame img { display: block; width: 100%; max-height: 59vh; object-fit: contain; }
+    .flow-sweep {
+      position: absolute;
+      top: 9%; bottom: 13%; left: -14%;
+      width: 9%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.72), transparent);
+      transform: skewX(-10deg);
+      animation: sweep 7s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes sweep { 0%,12% { left: -14%; } 78%,100% { left: 108%; } }
+    .caption-row { display: flex; justify-content: space-between; gap: 24px; color: var(--muted); font-size: clamp(13px, .98vw, 16px); }
+
+    .task-flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1.15vw;
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .task {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      padding: 22px 18px;
+      border: 1px solid var(--line);
+      border-radius: 21px;
+      background: rgba(255,255,255,.91);
+      box-shadow: var(--shadow-soft);
+    }
+    .task:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -1.03vw; top: 48%; z-index: 3;
+      display: grid; width: 24px; height: 24px; place-items: center;
+      border-radius: 50%; color: white; background: var(--blue); font-weight: 900; font-size: .82em;
+    }
+    .task-number {
+      display: grid; width: 40px; height: 40px; margin-bottom: 19px; place-items: center;
+      border-radius: 13px; color: white; background: var(--blue); font-weight: 900;
+    }
+    .task:nth-child(2) .task-number { background: #287fb5; }
+    .task:nth-child(3) .task-number { background: var(--teal); }
+    .task:nth-child(4) .task-number { background: var(--amber); }
+    .task:nth-child(5) .task-number { background: var(--violet); }
+    .task p { color: var(--muted); font-size: clamp(13px, .96vw, 16px); }
+    .task-output { margin-top: auto !important; padding-top: 13px; border-top: 1px solid var(--line); color: var(--ink) !important; font-weight: 850; }
+
+    .expectation {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 15px 19px;
+      border: 1px solid #d7cff4;
+      border-radius: 18px;
+      color: #4c3f87;
+      background: var(--violet-soft);
+    }
+    .expectation strong { white-space: nowrap; }
+    .expectation span { color: var(--muted); }
+
+    .start-layout {
+      display: grid;
+      grid-template-columns: .78fr 1.22fr;
+      gap: 2.2vw;
+      flex: 1;
+      min-height: 0;
+    }
+    .requirements, .first-hour {
+      padding: 25px 24px;
+      border: 1px solid var(--line);
+      border-radius: 25px;
+      background: rgba(255,255,255,.91);
+      box-shadow: var(--shadow-soft);
+    }
+    .req-list { display: grid; gap: 12px; margin-top: 18px; }
+    .req {
+      display: flex; align-items: center; gap: 12px; padding: 11px 12px;
+      border-radius: 13px; color: var(--muted); background: #f1f5f5;
+    }
+    .req b { color: var(--ink); }
+    .check-dot { display: grid; flex: 0 0 28px; height: 28px; place-items: center; border-radius: 50%; color: var(--green); background: var(--green-soft); font-weight: 900; }
+    .starter-steps { display: grid; gap: 11px; margin-top: 17px; }
+    .starter-step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 13px;
+      align-items: center;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: #fbfcfc;
+    }
+    .starter-step > span:first-child { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 12px; color: white; background: var(--blue); font-weight: 900; }
+    .starter-step strong { display: block; }
+    .starter-step small { color: var(--muted); }
+
+    .success-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5vw;
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .success-card {
+      display: flex;
+      flex-direction: column;
+      padding: 25px 21px;
+      border: 1px solid var(--line);
+      border-radius: 23px;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow-soft);
+    }
+    .success-icon {
+      display: grid; width: 46px; height: 46px; margin-bottom: 20px; place-items: center;
+      border-radius: 15px; color: var(--blue); background: var(--blue-soft); font-size: 1.15em; font-weight: 900;
+    }
+    .success-card:nth-child(2) .success-icon { color: var(--teal); background: var(--teal-soft); }
+    .success-card:nth-child(3) .success-icon { color: #7d5a00; background: var(--amber-soft); }
+    .success-card:nth-child(4) .success-icon { color: var(--violet); background: var(--violet-soft); }
+    .success-card p { margin-bottom: 0; color: var(--muted); font-size: clamp(14px, 1.02vw, 17px); }
+
+    .contact-layout {
+      display: grid;
+      grid-template-columns: 1fr .88fr;
+      gap: 4vw;
+      flex: 1;
+      min-height: 0;
+      align-items: center;
+    }
+    .contact-title h1 { max-width: 10.5em; }
+    .contact-card {
+      padding: 38px 34px;
+      border: 1px solid #d5ccf4;
+      border-radius: 30px;
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow);
+    }
+    .contact-card .contact-label { color: var(--muted); font-size: .82em; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+    .email-link {
+      display: block;
+      margin: 16px 0 21px;
+      color: var(--blue);
+      font-size: clamp(24px, 2.2vw, 37px);
+      font-weight: 900;
+      letter-spacing: -.025em;
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+    .email-link:hover, .email-link:focus-visible { text-decoration: underline; outline: none; }
+    .contact-card p { margin: 0; color: var(--muted); }
+    .question-chips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
+    .question-chips span { padding: 8px 11px; border-radius: 999px; color: #4f6570; background: #edf3f5; font-size: .82em; font-weight: 750; }
+    .team-note {
+      margin-top: 21px;
+      padding: 15px 16px;
+      border: 1px solid #efd6a0;
+      border-radius: 15px;
+      color: #665124;
+      background: #fff8e8;
+      font-size: clamp(12px, .9vw, 15px);
+      line-height: 1.4;
+    }
+    .team-note strong { color: #4d3b16; }
+
+    .key-help {
+      position: fixed;
+      left: 28px; bottom: 24px; z-index: 10;
+      color: #687a84;
+      font-size: clamp(11px, .84vw, 14px);
+      pointer-events: none;
+    }
+    .controls {
+      position: fixed;
+      right: 24px; bottom: 18px; z-index: 11;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px;
+      border: 1px solid rgba(195,207,212,.88);
+      border-radius: 16px;
+      background: rgba(255,255,255,.9);
+      box-shadow: 0 10px 28px rgba(20,37,47,.09);
+      backdrop-filter: blur(10px);
+    }
+    .controls button {
+      display: grid;
+      width: 37px; height: 37px;
+      place-items: center;
+      border: 0;
+      border-radius: 11px;
+      color: var(--ink);
+      background: #edf2f3;
+      cursor: pointer;
+      font-weight: 900;
+    }
+    .controls button:hover, .controls button:focus-visible { color: white; background: var(--blue); outline: none; }
+    .slide-count { min-width: 58px; color: var(--muted); font-size: .8em; font-weight: 800; text-align: center; }
+    .progress { position: fixed; left: 0; right: 0; bottom: 0; z-index: 12; height: 5px; background: rgba(20,37,47,.08); }
+    .progress span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--blue), var(--teal), var(--violet)); transition: width .35s ease; }
+
+
+    /* Teaching additions retain the existing deck typography and palette. */
+    .mission-card p + p { margin-top: 18px; }
+    .field-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: clamp(15px, 1.25vw, 19px); line-height: 1.3; }
+    .field-table th, .field-table td { padding: 11px 12px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
+    .field-table thead th { color: var(--blue); font-size: .85em; letter-spacing: .04em; }
+    .field-table th:first-child { width: 36%; }
+    .field-table th:nth-child(2) { width: 33%; }
+    .field-table tbody th { font-weight: 650; }
+    .field-table td { color: var(--muted); }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .92em; }
+    .column-slide { gap: 12px; }
+    .column-slide .lead { font-size: clamp(17px, 1.45vw, 23px); }
+    .column-slide .truth-strip { font-size: clamp(15px, 1.2vw, 18px); padding: 12px 16px; margin-top: auto; }
+    .decoder-key { margin: 0; color: var(--muted); font-size: clamp(14px, 1.15vw, 18px); }
+    .record-code { align-items: center; }
+    .record-field.syndrome { text-align: left; line-height: 1.65; padding-left: 18px; }
+    .record-context { margin: 22px 0 0; color: #bbd1dc; font-size: clamp(14px, 1.16vw, 18px); }
+    .syndrome-slide .pointer p { font-size: clamp(15px, 1.2vw, 19px); }
+    .syndrome-slide .record-layout { grid-template-columns: 1fr 1fr; }
+    .syndrome-slide .note-strip { font-size: clamp(15px, 1.22vw, 19px); }
+    .mapping-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 3vw; flex: 1; min-height: 0; }
+    .mapping-layout article { min-width: 0; }
+    .mapping-layout h3 { padding-bottom: 12px; border-bottom: 3px solid var(--teal); }
+    .ml-mapping h3 { border-color: var(--violet); }
+    .field-list, .task-inputs { margin: 0; font-size: clamp(15px, 1.22vw, 19px); line-height: 1.35; }
+    .field-list > div { margin-bottom: 14px; }
+    .field-list dt { font-weight: 650; }
+    .field-list dd, .task-inputs dd { margin: 4px 0 0; color: var(--muted); }
+    .task-inputs > div { padding: 0 0 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+    .task-inputs > div:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+    .task-inputs dt { color: #5a449e; font-weight: 800; }
+    .circuit-limit { border-top: 1px solid var(--line); padding-top: 12px; }
+    .mapping-slide .truth-strip { font-size: clamp(15px, 1.18vw, 18px); }
+    .mapping-slide .truth-strip strong { white-space: normal; flex: 0 0 32%; }
+    .architecture-slide .architecture-frame { padding: 8px 12px; }
+    .architecture-slide .architecture-frame img { height: 100%; max-height: 100%; min-height: 0; }
+    .parquet-explainer { border-top: 3px solid var(--teal); padding-top: 14px; }
+    .parquet-explainer h3 { margin-bottom: 8px; }
+    .parquet-explainer p { margin-bottom: 8px; font-size: clamp(16px, 1.35vw, 21px); }
+    .parquet-explainer .small { margin-bottom: 0; font-size: clamp(14px, 1.12vw, 18px); }
+    .windows-note { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: clamp(15px, 1.2vw, 19px); }
+    .windows-note strong { display: block; color: var(--ink); margin-bottom: 6px; }
+    @media (max-height: 690px) {
+      .field-table th, .field-table td { padding-top: 8px; padding-bottom: 8px; }
+      .field-list > div { margin-bottom: 10px; }
+      .task-inputs > div { padding-bottom: 10px; margin-bottom: 10px; }
+    }
+
+    @media (max-width: 1050px) {
+      .slide { padding-left: 38px; padding-right: 38px; }
+      .slide::after { right: 38px; }
+      .title-layout, .problem-layout, .qec-layout, .record-layout, .start-layout, .contact-layout { gap: 24px; }
+      .dataset-card, .model-card { padding: 19px 17px; }
+      .task { padding: 18px 14px; }
+      .architecture-frame img { max-height: 56vh; }
+    }
+
+    @media (max-height: 690px) {
+      .slide { padding-top: 28px; padding-bottom: 66px; gap: 12px; }
+      .slide::after { top: 28px; }
+      .lead { font-size: clamp(17px, 1.45vw, 22px); }
+      .hero-orbit { min-height: 48vh; }
+      .qec-demo { padding-top: 16px; }
+      .qubit-row { margin-top: 18px; margin-bottom: 15px; }
+      .qubit { min-height: 70px; }
+      .flow-card { min-height: 190px; padding: 19px 17px; }
+      .architecture-frame img { max-height: 55vh; }
+      .dataset-card p, .model-card p { margin-bottom: 10px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+      .slide { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" id="deck" aria-label="Assignment 1 introductory presentation">
+    <section class="slide active" data-section="Welcome" aria-labelledby="s1-title">
+      <div class="title-layout">
+        <div>
+          <p class="eyebrow reveal" style="--order:0">DSAIT4000 · Assignment 1</p>
+          <h1 id="s1-title" class="reveal" style="--order:1">QEC data pipeline <span class="accent">for AI</span></h1>
+          <p class="lead reveal" style="--order:2">Turn unfamiliar quantum error-correction files into checked, traceable and ML-ready data.</p>
+          <div class="title-meta reveal" style="--order:3">
+            <span>4 weeks</span><span>Part I: 60%</span><span>Part II: 40%</span><span>Team project</span>
+          </div>
+        </div>
+        <div class="hero-orbit reveal" style="--order:2" aria-hidden="true">
+          <div class="orbit-ring"></div><div class="orbit-ring r2"></div>
+          <div class="orbit-core">QEC</div>
+          <div class="orbit-node n1"><span><b>01</b><small>bits</small></span></div>
+          <div class="orbit-node n2"><span><b>✓</b><small>checks</small></span></div>
+          <div class="orbit-node n3"><span><b>SQL</b><small>relations</small></span></div>
+          <div class="orbit-node n4"><span><b>ML</b><small>consumer</small></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide no-section-label" data-section="The decoder task" aria-labelledby="s2-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Project and datasets</p><h2 id="s2-title">QEC data and the decoder task</h2></div>
+      </div>
+      <div class="problem-layout">
+        <div class="problem-list">
+          <div class="problem-item reveal" style="--order:1"><span>S</span><p><strong>Syndrome simulations</strong>One CSV row counts repeated check patterns with a known logical-error label.</p></div>
+          <div class="problem-item reveal" style="--order:2"><span>G</span><p><strong>Google hardware</strong>One shot is one circuit execution, with detector bits, an outcome and four predictions.</p></div>
+          <div class="problem-item reveal" style="--order:3"><span>Q</span><p><strong>QASMBench circuits</strong>OpenQASM describes how checks and conditional corrections work. It has no labelled shots.</p></div>
+          <div class="problem-item reveal" style="--order:4"><span>1</span><p><strong>Your data-management task</strong>Preserve the meaning of each record as you clean, relate and export it.</p></div>
+        </div>
+        <article class="mission-card reveal" style="--order:2">
+          <p class="eyebrow">The ML application</p>
+          <h3>Predict a logical outcome from error evidence</h3>
+          <p><strong>Training:</strong> fit a decoder using input features and known binary outcomes.</p>
+          <p><strong>Inference:</strong> give the fitted model the same kind of input features to predict an outcome.</p>
+          <p><strong>Evaluation:</strong> compare predictions with held-out actual outcomes. Actual outcomes are never input features.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="slide no-section-label" data-section="QEC basics" aria-labelledby="s3-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">QEC in plain language</p><h2 id="s3-title">Parity checks reveal evidence of errors</h2></div>
+        <span class="badge">No prior quantum course required</span>
+      </div>
+      <div class="qec-layout">
+        <div class="analogy-stack">
+          <div class="analogy reveal" style="--order:1"><strong>Physical qubits are noisy</strong><p>Logical information is protected across several physical qubits.</p></div>
+          <div class="analogy reveal" style="--order:2"><strong>A parity check is like a checksum</strong><p>Ancilla qubits record check outcomes without directly reading the protected information.</p></div>
+          <div class="analogy reveal" style="--order:3"><strong>A syndrome is a pattern</strong><p>Several check outcomes together provide clues about where an error may have occurred.</p></div>
+        </div>
+        <div class="qec-demo reveal" id="qecDemo" data-step="0" style="--order:2" aria-live="polite">
+          <div class="demo-top"><span class="demo-label">Simplified repetition-code intuition</span><button class="replay" id="replayDemo" type="button">Replay animation</button></div>
+          <div class="qubit-row" aria-label="Three data qubits">
+            <div class="qubit q0">q0<small>data</small></div>
+            <div class="qubit q1">q1<small>data</small><span class="fault">!</span></div>
+            <div class="qubit q2">q2<small>data</small></div>
+          </div>
+          <div class="check-row">
+            <div class="check">check s0<code>q0 ↔ q1</code></div>
+            <div class="check">check s1<code>q1 ↔ q2</code></div>
+          </div>
+          <div class="decoder-result">Syndrome 11 suggests a fault near q1</div>
+          <p class="demo-caption" id="demoCaption">Protected information is spread across several data qubits.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide no-section-label column-slide" data-section="Google columns" aria-labelledby="s4-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Google QEC hardware</p><h2 id="s4-title">What one hardware shot contains</h2></div>
+      </div>
+      <p class="lead reveal" style="--order:1">One execution through 25 QEC rounds. Align companion files by experiment and shot.</p>
+      <table class="field-table reveal" style="--order:2" aria-label="Google source files and prepared columns">
+        <thead><tr><th scope="col">Prepared column(s)</th><th scope="col">Meaning</th><th scope="col">Supplied source</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><code>experiment_id</code>, <code>shot_index</code></th><td>Which experiment and which zero-based shot</td><td>Directory + aligned row position</td></tr>
+          <tr><th scope="row"><code>distance</code>, <code>rounds</code><br><code>center_row</code>, <code>center_col</code></th><td>Code parameters and processor location</td><td><code>properties.yml</code> + directory</td></tr>
+          <tr><th scope="row"><code>measurement_bits</code>, <code>sweep_bits</code></th><td>Raw measurements and shot configuration</td><td><code>measurements.b8</code>, <code>sweep.b8</code></td></tr>
+          <tr><th scope="row"><code>detector_bits</code>, <code>detector_count</code></th><td>Derived parity inconsistencies: 200 or 600 bits</td><td><code>detection_events.b8</code> + properties</td></tr>
+          <tr><th scope="row"><code>detector_event_count</code></th><td>Number of fired detectors in this shot</td><td>Count set bits in the detector record</td></tr>
+          <tr><th scope="row"><code>*_prediction</code> (four columns)</th><td>Each supplied decoder’s predicted flip: 0 or 1</td><td><code>obs_flips_predicted_by_*.01</code></td></tr>
+          <tr><th scope="row"><code>actual_observable_flip</code></th><td>Actual logical flip: the supervised target</td><td><code>obs_flips_actual.01</code></td></tr>
+        </tbody>
+      </table>
+      <p class="decoder-key reveal" style="--order:3">Four decoders: belief matching, correlated matching, PyMatching, tensor network contraction.</p>
+      <div class="truth-strip reveal" style="--order:4"><strong>Decoder error = prediction ≠ actual</strong><span>A fired detector is evidence. If actual = 1 and prediction = 1, the decoder is correct.</span></div>
+    </section>
+
+    <section class="slide no-section-label syndrome-slide" data-section="Syndrome columns" aria-labelledby="s5-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Simulated syndromes</p><h2 id="s5-title">Three CSV columns become a weighted example</h2></div>
+      </div>
+      <div class="record-layout">
+        <div class="record-card reveal" style="--order:1">
+          <div class="record-file">Illustrative values · actual source column names</div>
+          <div class="record-code mono">
+            <div class="record-field label">0</div>
+            <div class="record-field syndrome">((0,0,0,0),<br> (0,0,0,0),<br> (0,0,1,0),<br> (0,0,1,0))</div>
+            <div class="record-field quantity">1234</div>
+          </div>
+          <div class="record-names mono"><span>labels</span><span>syndromes</span><span>quantity</span></div>
+          <p class="record-context">The filename supplies <code>physical_fault_rate</code>.<br>75,598 aggregate rows represent 70 million shots.</p>
+        </div>
+        <div class="record-pointers">
+          <div class="pointer reveal" style="--order:2"><strong><code>syndromes</code>: model input</strong><p>Four rounds × four check values. Flatten round first, then check, into 16 binary values.</p></div>
+          <div class="pointer reveal" style="--order:3"><strong><code>labels</code>: supervised target</strong><p>0 = no logical error, 1 = logical error.<br>Export as <code>logical_error_label</code>.</p></div>
+          <div class="pointer weight-warning reveal" style="--order:4"><strong><code>quantity</code>: sample weight</strong><p>1,234 shots produced this pattern and label.<br>Export as <code>sample_weight</code>, keep one row.</p></div>
+        </div>
+      </div>
+      <div class="note-strip reveal" style="--order:5"><strong>At inference</strong><span>Input only the 16 <code>syndrome_bits</code>. The label, weight, fault rate and identifiers are not features. One syndrome can occur with either label.</span></div>
+    </section>
+
+    <section class="slide no-section-label mapping-slide" data-section="Circuit columns and ML" aria-labelledby="s6-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Circuit structure and the expected application</p><h2 id="s6-title">Circuit records and model inputs</h2></div>
+      </div>
+      <div class="mapping-layout">
+        <article class="circuit-columns reveal" style="--order:1">
+          <h3>QASMBench: columns you extract</h3>
+          <p class="small">Three circuit families, source + transpiled variants. Each table describes circuit structure.</p>
+          <dl class="field-list">
+            <div><dt><code>circuit_id</code>, <code>benchmark_name</code>, <code>variant</code></dt><dd>Identify the circuit and its version.</dd></div>
+            <div><dt><code>qubit_count</code>, <code>measurement_count</code>, <code>two_qubit_gate_count</code></dt><dd>Describe declared qubits and executed operations.</dd></div>
+            <div><dt><code>ancilla_qubit</code>, <code>data_qubits</code>, <code>syndrome_bit</code></dt><dd>Who measures which parity, and where the result goes.</dd></div>
+            <div><dt><code>condition_register</code>, <code>condition_value</code>, <code>gate</code>, <code>target_qubit</code></dt><dd>Which measured syndrome activates which recovery.</dd></div>
+          </dl>
+          <p class="small circuit-limit">No shot labels or shared shot IDs. QASMBench informs Gold’s circuit relations.</p>
+        </article>
+        <article class="ml-mapping reveal" style="--order:2">
+          <h3>Part II: fixed feature and target mapping</h3>
+          <dl class="task-inputs">
+            <div><dt>A · Weighted syndrome decoder</dt><dd><b>Input:</b> 16 <code>syndrome_bits</code><br><b>Target:</b> <code>logical_error_label</code><br><b>Weight:</b> <code>sample_weight</code></dd></div>
+            <div><dt>B · Combined Google decoder</dt><dd><b>Input:</b> <code>detector_event_count / detector_count</code> + four <code>*_prediction</code> values<br><b>Target:</b> <code>actual_observable_flip</code><br>Fit distance 3 and distance 5 separately.</dd></div>
+            <div><dt>C · Raw Google detector prototype</dt><dd><b>Input:</b> 200 unpacked <code>detector_bits</code><br><b>Target:</b> <code>actual_observable_flip</code><br>Use <code>distance = 3</code> and <code>shot_index &lt; 12_500</code>.</dd></div>
+          </dl>
+        </article>
+      </div>
+      <div class="truth-strip reveal" style="--order:3"><strong>Same features at training and inference</strong><span><code>example_id</code> traces a row. <code>data_split</code> chooses train, validation or test. Neither is a feature.</span></div>
+    </section>
+
+    <section class="slide no-section-label schedule-slide" data-section="Assignment shape" aria-labelledby="s7-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">One data journey, two parts</p><h2 id="s7-title">Data management first, AI/ML second</h2></div>
+        <span class="badge">4-week scope</span>
+      </div>
+      <div class="split-layout">
+        <article class="part-panel part-one reveal" style="--order:1"><span class="part-percent">60%</span><h3>Part I · Data Management</h3><p>Inspect, clean, connect, store, query and trace all three sources.</p><ul class="plain-list"><li>Source-preserving import</li><li>Checked Parquet tables</li><li>Student-designed PostgreSQL model</li><li>ML-ready exports</li></ul><span class="tag">the larger part</span></article>
+        <article class="part-panel part-two reveal" style="--order:2"><span class="part-percent">40%</span><h3>Part II · AI/ML consumer</h3><p>Use the exported data in three deliberately small modelling tasks.</p><ul class="plain-list"><li>Baselines and simple models</li><li>Supplied partitions</li><li>Metrics and timings</li><li>Honest limitations</li></ul><span class="tag">proves the hand-off works</span></article>
+      </div>
+      <div class="schedule-footer reveal" style="--order:3">
+        <div class="milestone-strip" aria-label="Assignment dates">
+          <div class="milestone"><span class="milestone-mark">▶</span><span>Start<strong>8 September 2026</strong></span></div>
+          <div class="milestone"><span class="milestone-mark">?</span><span>Q&amp;A session<strong>6 October 2026</strong></span></div>
+          <div class="milestone"><span class="milestone-mark">✓</span><span>Deadline<strong>11 October 2026</strong></span></div>
+        </div>
+        <div class="timeline"><div class="week"><strong>Week 1</strong><span>setup + discovery</span></div><div class="week"><strong>Week 2</strong><span>Silver + Gold</span></div><div class="week"><strong>Week 3</strong><span>finish Part I + begin ML</span></div><div class="week"><strong>Week 4</strong><span>evaluate + reproduce</span></div></div>
+      </div>
+    </section>
+
+    <section class="slide no-section-label architecture-slide" data-section="Architecture" aria-labelledby="s8-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Course-specific architecture</p><h2 id="s8-title">A visible path from original files to models</h2></div>
+        <span class="badge">Motivated alternatives allowed</span>
+      </div>
+      <div class="architecture-frame reveal" style="--order:1">
+        <img src="./assets/qec-assignment-architecture.svg" alt="Three QEC data sources flow through Bronze original files, Silver clean Parquet, Gold PostgreSQL and ML Parquet into Part II AI models. Results hold quality issues, run records and source tracing.">
+        <span class="flow-sweep" aria-hidden="true"></span>
+      </div>
+      <div class="parquet-explainer reveal" style="--order:2">
+        <h3>Parquet: an industry-standard table format</h3>
+        <p>An open binary format that stores data by column, preserves types and compresses well. Tools can read selected columns efficiently. Silver and ML use it for compact, typed hand-offs.</p>
+        <p class="small">Open with Pandas or PyArrow. Parquet is a file format. Gold remains your PostgreSQL database.</p>
+      </div>
+    </section>
+
+    <section class="slide" data-section="Part I" aria-labelledby="s9-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Part I · Data Management</p><h2 id="s9-title">Five tasks form one repeatable pipeline</h2></div>
+      </div>
+      <div class="task-flow">
+        <article class="task reveal" style="--order:1"><span class="task-number">1</span><h3>Inventory</h3><p>List files, members, sizes and hashes. Preserve source bytes.</p><p class="task-output">Know what arrived</p></article>
+        <article class="task reveal" style="--order:2"><span class="task-number">2</span><h3>Discover</h3><p>Explain row meanings, identifiers, structures and possible relations.</p><p class="task-output">Know what it means</p></article>
+        <article class="task reveal" style="--order:3"><span class="task-number">3</span><h3>Clean</h3><p>Parse values, test assumptions and record rejected evidence.</p><p class="task-output">Build Silver</p></article>
+        <article class="task reveal" style="--order:4"><span class="task-number">4</span><h3>Integrate</h3><p>Design PostgreSQL entities, keys, constraints and useful relations.</p><p class="task-output">Build Gold</p></article>
+        <article class="task reveal" style="--order:5"><span class="task-number">5</span><h3>Publish</h3><p>Answer SQL questions and export stable ML examples from Gold.</p><p class="task-output">Serve Part II</p></article>
+      </div>
+      <div class="note-strip reveal" style="--order:6"><strong>Evidence matters</strong><span>Record quality issues, run facts, row counts and source tracing under <span class="mono">results/part1/</span>.</span></div>
+    </section>
+
+    <section class="slide" data-section="Part II" aria-labelledby="s10-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Part II · AI/ML as a consumer</p><h2 id="s10-title">Three bounded experiments test the data hand-off</h2></div>
+      </div>
+      <div class="model-grid">
+        <article class="model-card reveal" style="--order:1"><div class="model-mark">A</div><h3>Weighted syndrome decoder</h3><p>Predict the logical-error label from the prepared 16-bit syndrome sequence.</p><ul class="plain-list"><li>Weighted prior baseline</li><li>One weighted linear model</li></ul><span class="tag">aggregate examples</span></article>
+        <article class="model-card reveal" style="--order:2"><div class="model-mark">B</div><h3>Combined hardware decoder</h3><p>Compare four supplied decoders and one simple linear combination.</p><ul class="plain-list"><li>Distance 3 and 5 separately</li><li>Same held-out shots</li></ul><span class="tag">decoder comparison</span></article>
+        <article class="model-card reveal" style="--order:3"><div class="model-mark">C</div><h3>Raw-detector prototype</h3><p>Train one small MLP on a fixed distance-three subset of detector bits.</p><ul class="plain-list"><li>Bounded input size</li><li>Explain what the flat vector hides</li></ul><span class="tag">pipeline consumer check</span></article>
+      </div>
+      <div class="expectation reveal" style="--order:4"><strong>Model performance is not part of the grade.</strong><span>You are graded on correct data use, baselines, repeatability, evaluation, testing and honest interpretation—not on beating a decoder.</span></div>
+    </section>
+
+    <section class="slide no-section-label" data-section="Getting started" aria-labelledby="s11-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">Before writing the pipeline</p><h2 id="s11-title">Start small and verify the environment</h2></div>
+      </div>
+      <div class="start-layout">
+        <article class="requirements reveal" style="--order:1"><h3>Local requirements</h3><div class="req-list"><div class="req"><span class="check-dot">✓</span><span><b>Docker</b> with Compose</span></div><div class="req"><span class="check-dot">✓</span><span><b>8 GB RAM</b> available to Docker</span></div><div class="req"><span class="check-dot">✓</span><span><b>≈ 5 GB</b> free disk space</span></div><div class="req"><span class="check-dot">✓</span><span><b>Bash + GNU Make</b></span></div></div><p class="windows-note"><strong>Windows: install and use Bash</strong>WSL 2 + Ubuntu includes Bash. Enable Docker’s Ubuntu integration. Run assignment commands in Ubuntu, not PowerShell.</p><p class="small" style="margin:14px 0 0">No Kaggle, cloud or quantum-computer account is required.</p></article>
+        <article class="first-hour reveal" style="--order:2"><h3>A good first working session</h3><div class="starter-steps"><div class="starter-step"><span>1</span><div><strong>Read the brief and quantum-data primer</strong><small>Use the plain-language guide whenever a term is unfamiliar.</small></div></div><div class="starter-step"><span>2</span><div><strong>Start and verify the supplied platform</strong><small>Follow <span class="mono">getting-started.md</span>; run the starter checks.</small></div></div><div class="starter-step"><span>3</span><div><strong>Inspect tiny examples</strong><small>One CSV row, one packed-bit record and one circuit.</small></div></div><div class="starter-step"><span>4</span><div><strong>Write down row meanings and candidate IDs</strong><small>Only then plan Silver tables and Gold relations.</small></div></div></div></article>
+      </div>
+    </section>
+
+    <section class="slide" data-section="Success" aria-labelledby="s12-title">
+      <div class="topline reveal" style="--order:0">
+        <div><p class="eyebrow">What good work looks like</p><h2 id="s12-title">Correct, traceable and repeatable beats impressive-looking</h2></div>
+      </div>
+      <div class="success-grid">
+        <article class="success-card reveal" style="--order:1"><span class="success-icon">✓</span><h3>Correct</h3><p>Types, bit order, weights, relationships and row meanings are checked rather than assumed.</p></article>
+        <article class="success-card reveal" style="--order:2"><span class="success-icon">↶</span><h3>Traceable</h3><p>An ML prediction can be resolved through Gold and Silver to the supplied source record.</p></article>
+        <article class="success-card reveal" style="--order:3"><span class="success-icon">↻</span><h3>Repeatable</h3><p>One documented command regenerates outputs, and a second run creates no duplicates.</p></article>
+        <article class="success-card reveal" style="--order:4"><span class="success-icon">≠</span><h3>Honest</h3><p>Rejected joins, data issues, weak model results and limitations remain visible.</p></article>
+      </div>
+      <div class="truth-strip reveal" style="--order:5"><strong>Use the documents</strong><span>The brief defines the task; the Silver and ML specifications define compatibility outputs; the rubric and checklist define the evidence expected.</span></div>
+    </section>
+
+    <section class="slide" data-section="Questions" aria-labelledby="s13-title">
+      <div class="contact-layout">
+        <div class="contact-title">
+          <p class="eyebrow reveal" style="--order:0">Questions during the project?</p>
+          <h1 id="s13-title" class="reveal" style="--order:1">Ask early. Bring evidence.</h1>
+          <p class="lead reveal" style="--order:2">When something is unclear, include the file or step you are working on, what you expected and what you observed.</p>
+        </div>
+        <article class="contact-card reveal" style="--order:2">
+          <div class="contact-label">Contact</div>
+          <a class="email-link" href="mailto:t.m.littau@tudelft.nl">t.m.littau@tudelft.nl</a>
+          <p>Please use the course communication channel for announcements and this email for assignment questions that need direct follow-up.</p>
+          <div class="question-chips"><span>setup</span><span>data meaning</span><span>requirements</span><span>unexpected behavior</span></div>
+          <div class="team-note"><strong>Team member absent?</strong> Contact us well in advance. If we know early enough, combining groups or making another suitable adjustment may still be possible.</div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <div class="key-help" aria-hidden="true">← → navigate · Home/End jump · F fullscreen</div>
+  <nav class="controls" aria-label="Presentation controls">
+    <button id="prev" type="button" aria-label="Previous slide">←</button>
+    <span class="slide-count" id="slideCount">1 / 13</span>
+    <button id="next" type="button" aria-label="Next slide">→</button>
+    <button id="fullscreen" type="button" aria-label="Toggle fullscreen">⛶</button>
+  </nav>
+  <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+  <script>
+    (() => {
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const count = document.getElementById('slideCount');
+      const progress = document.getElementById('progressBar');
+      const demo = document.getElementById('qecDemo');
+      const demoCaption = document.getElementById('demoCaption');
+      const demoCaptions = [
+        'Protected information is spread across several data qubits.',
+        'A physical fault disturbs one data qubit.',
+        'The two neighbouring parity checks change, producing syndrome 11.',
+        'A decoder uses that pattern to infer a likely correction.'
+      ];
+      let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.replace('#', '')) - 1 || 0));
+      let demoTimer = null;
+      let demoStep = 0;
+
+      function setDemoStep(step) {
+        demoStep = step % demoCaptions.length;
+        demo.dataset.step = String(demoStep);
+        demoCaption.textContent = demoCaptions[demoStep];
+      }
+
+      function startDemo() {
+        clearInterval(demoTimer);
+        setDemoStep(0);
+        demoTimer = setInterval(() => setDemoStep(demoStep + 1), 1800);
+      }
+
+      function stopDemo() { clearInterval(demoTimer); demoTimer = null; }
+
+      function show(index, updateHash = true) {
+        const previous = current;
+        current = Math.max(0, Math.min(slides.length - 1, index));
+        slides.forEach((slide, i) => {
+          const active = i === current;
+          slide.classList.toggle('active', active);
+          slide.classList.toggle('leaving', i === previous && !active);
+          slide.setAttribute('aria-hidden', String(!active));
+        });
+        count.textContent = `${current + 1} / ${slides.length}`;
+        progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+        document.title = `${current + 1}/${slides.length} · Assignment 1 · QEC data pipeline for AI`;
+        if (current === 2) startDemo(); else stopDemo();
+        if (updateHash) history.replaceState(null, '', `#${current + 1}`);
+      }
+
+      document.getElementById('prev').addEventListener('click', () => show(current - 1));
+      document.getElementById('next').addEventListener('click', () => show(current + 1));
+      document.getElementById('replayDemo').addEventListener('click', startDemo);
+      document.getElementById('fullscreen').addEventListener('click', async () => {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+        else await document.exitFullscreen();
+      });
+
+      document.addEventListener('keydown', event => {
+        if (['ArrowRight', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); show(current + 1); }
+        if (['ArrowLeft', 'PageUp'].includes(event.key)) { event.preventDefault(); show(current - 1); }
+        if (event.key === 'Home') { event.preventDefault(); show(0); }
+        if (event.key === 'End') { event.preventDefault(); show(slides.length - 1); }
+        if (event.key.toLowerCase() === 'f') document.getElementById('fullscreen').click();
+        if (event.key.toLowerCase() === 'r' && current === 2) startDemo();
+      });
+
+      let touchStartX = null;
+      document.addEventListener('touchstart', event => { touchStartX = event.changedTouches[0].screenX; }, { passive: true });
+      document.addEventListener('touchend', event => {
+        if (touchStartX === null) return;
+        const delta = event.changedTouches[0].screenX - touchStartX;
+        if (Math.abs(delta) > 50) show(current + (delta < 0 ? 1 : -1));
+        touchStartX = null;
+      }, { passive: true });
+
+      window.addEventListener('hashchange', () => {
+        const requested = Number(location.hash.replace('#', '')) - 1;
+        if (Number.isInteger(requested) && requested >= 0 && requested < slides.length) show(requested, false);
+      });
+
+      show(current, false);
+    })();
+  </script>
+</body>
+</html>
