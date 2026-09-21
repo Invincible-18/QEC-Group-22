@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from .config import Settings
 from .connections import bronze_inventory, check_platform
+from .stages.prepare_data import run as run_prepare_data
 
 
 console = Console()
@@ -32,13 +34,22 @@ def command_inventory(settings: Settings) -> int:
     return 0
 
 
-def command_run(_: Settings) -> int:
+def command_run(settings: Settings) -> int:
+    archive_candidates = [
+        Path("/course-data/raw/source=qec_syndromes/syndromes_dataset.zip"),
+        Path("../datasets/student-bundle/core/raw/source=qec_syndromes/syndromes_dataset.zip"),
+    ]
+    archive = next((candidate for candidate in archive_candidates if candidate.exists()), None)
+    if archive is None:
+        console.print("[red]Syndrome archive was not found.[/red]")
+        return 2
+    run_id = datetime.now(UTC).strftime("syndrome-%Y%m%dT%H%M%SZ")
+    result = run_prepare_data(run_id, archive, settings.local_lake_root)
     console.print(
-        "[yellow]Pipeline stages are intentionally unimplemented.[/yellow]\n"
-        "Implement your pipeline modules under src/quantum_lake_student, then "
-        "replace this command with your orchestrated Part I runner."
+        f"[green]OK[/green] syndrome Silver: {result.output_count:,} rows, "
+        f"{result.issue_count:,} issues written under {settings.local_lake_root}"
     )
-    return 2
+    return 0
 
 
 def command_train(_: Settings) -> int:
