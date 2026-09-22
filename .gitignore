@@ -8,3 +8,8 @@ starter/lake/
 starter/reports/
 starter/.coverage
 datasets/
+.claude/
+starter/results/part1/*
+!starter/results/part1/.gitkeep
+starter/results/part2/*
+!starter/results/part2/.gitkeep
