@@ -1,0 +1,11 @@
+.env
+**/.DS_Store
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/.ipynb_checkpoints/
+starter/lake/
+starter/reports/
+starter/.coverage
+datasets/
+
