@@ -17,9 +17,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
+import subprocess
 import zipfile
 from ast import literal_eval
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -44,6 +47,7 @@ from quantum_lake_student.io_utils import (
     write_parquet,
 )
 from quantum_lake_student.models import QualityFinding, Severity, StageResult, stable_record_hash
+from quantum_lake_student.stages.register_sources import MANIFEST_PATH
 from quantum_lake_student.tracing import (
     GOOGLE_SHOT_MEMBERS,
     google_shot_source_record_id,
@@ -151,6 +155,43 @@ def _results_root() -> Path:
     return Path("/workspace/results/part1")
 
 
+def _code_revision() -> str:
+    """Best-effort git commit hash. The workspace container has no git binary
+    and no .git mount, so this only resolves when run somewhere that has both
+    (e.g. a future container image); otherwise it falls back to an operator-
+    supplied CODE_REVISION env var, then "unknown"."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return completed.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return os.environ.get("CODE_REVISION", "unknown")
+
+
+def _manifest_sha256(bronze_object: str, manifest_path: Path = MANIFEST_PATH) -> str:
+    """Look up a Bronze object's SHA-256 from the release manifest already
+    verified by register_sources.py, instead of re-downloading and re-hashing
+    the object here."""
+    if not bronze_object.startswith("bronze/"):
+        raise ValueError(f"unexpected bronze object path: {bronze_object!r}")
+    manifest_object_path = "raw/" + bronze_object[len("bronze/") :]
+    manifest = json.loads(manifest_path.read_text())
+    for entry in manifest["objects"]:
+        if entry["path"] == manifest_object_path:
+            return entry["sha256"]
+    raise ValueError(f"no manifest entry for {bronze_object!r}")
+
+
+def _count_issues(issues: list[dict], *, rule_ids: set[str]) -> int:
+    return sum(1 for issue in issues if issue["rule_id"] in rule_ids)
+
+
 # ============================================================================
 # qec_syndromes
 # ============================================================================
@@ -182,6 +223,14 @@ def _fault_rate(csv_name: str) -> float:
     return float(match.group("rate"))
 
 
+def _expected_sample_count(csv_name: str) -> int:
+    """Parse the nominal sample count encoded in the filename (e.g. ``nb-10M`` -> 10,000,000)."""
+    match = re.search(r"_nb-(?P<count>\d+)M", csv_name)
+    if match is None:
+        raise ValueError("filename does not contain a nominal sample count")
+    return int(match.group("count")) * 1_000_000
+
+
 def prepare_qec_syndromes(
     client, bucket: str, run_id: str
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -192,6 +241,7 @@ def prepare_qec_syndromes(
     records: list[dict] = []
     traces: list[dict] = []
     issues: list[dict] = []
+    schema_note_logged = False
 
     with zipfile.ZipFile(io.BytesIO(data)) as bundle:
         csv_members = sorted(
@@ -229,6 +279,51 @@ def prepare_qec_syndromes(
                 )
                 issues.append(data_issue_row(finding, run_id=run_id, action="excluded_from_silver"))
                 continue
+
+            if not schema_note_logged:
+                finding = QualityFinding(
+                    rule_id="labels_column_naming",
+                    severity=Severity.INFO,
+                    source_system="qec_syndromes",
+                    source_record_locator=member_name,
+                    message=(
+                        "Source documentation (Zenodo dataset description) refers to a "
+                        "'label' column; the actual CSV header uses 'labels' (plural). "
+                        "Parsing uses the actual header name."
+                    ),
+                    observed_value=str(list(frame.columns)),
+                )
+                issues.append(data_issue_row(finding, run_id=run_id, action="documented"))
+                schema_note_logged = True
+
+            try:
+                expected_quantity = _expected_sample_count(member_name)
+                actual_quantity = int(pd.to_numeric(frame["quantity"], errors="coerce").fillna(0).sum())
+                tolerance = max(1, round(expected_quantity * 0.001))
+                if abs(actual_quantity - expected_quantity) > tolerance:
+                    finding = QualityFinding(
+                        rule_id="quantity_reconciliation",
+                        severity=Severity.WARNING,
+                        source_system="qec_syndromes",
+                        source_record_locator=member_name,
+                        message=(
+                            f"quantity column sums to {actual_quantity}, which does not "
+                            f"reconcile with the filename's nominal sample count "
+                            f"({expected_quantity})"
+                        ),
+                        observed_value=str(actual_quantity),
+                    )
+                    issues.append(data_issue_row(finding, run_id=run_id, action="flagged"))
+            except ValueError as error:
+                finding = QualityFinding(
+                    rule_id="quantity_reconciliation",
+                    severity=Severity.WARNING,
+                    source_system="qec_syndromes",
+                    source_record_locator=member_name,
+                    message=str(error),
+                    observed_value=member_name,
+                )
+                issues.append(data_issue_row(finding, run_id=run_id, action="flagged"))
 
             for csv_row_number, (_, row) in enumerate(frame.iterrows(), start=2):
                 locator = f"{member_name}#row-{csv_row_number}"
@@ -448,6 +543,31 @@ def prepare_google_qec(
                 },
             }
             sweep_bits_count = props["circuit_sweep_bits"]
+
+            expected_shots = exp_record["shots"]
+            b8_checks = {
+                "measurements.b8": (files["measurements"], exp_record["measurement_count"]),
+                "sweep.b8": (files["sweep"], sweep_bits_count),
+                "detection_events.b8": (files["detectors"], exp_record["detector_count"]),
+            }
+            for fname, (blob, bits_per_record) in b8_checks.items():
+                actual_shots = len(blob) // b8_record_bytes(bits_per_record)
+                if actual_shots != expected_shots:
+                    raise RuntimeError(
+                        f"{exp_dir}: {fname} has {actual_shots} shot(s), "
+                        f"expected {expected_shots} per properties.yml"
+                    )
+
+            list_checks = {"obs_flips_actual.01": files["actual"]}
+            list_checks.update(
+                {fname: files[col] for col, fname in GOOGLE_PREDICTION_FILES.items()}
+            )
+            for fname, values in list_checks.items():
+                if len(values) != expected_shots:
+                    raise RuntimeError(
+                        f"{exp_dir}: {fname} has {len(values)} shot(s), "
+                        f"expected {expected_shots} per properties.yml"
+                    )
 
             for shot_index in range(exp_record["shots"]):
                 record, issue = parse_google_shot(
@@ -713,11 +833,24 @@ def prepare_qasmbench(
     issue_rows: list[dict] = []
 
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        unsafe = [name for name in archive.namelist() if not check_safe_archive_member(name)]
+        available = set(archive.namelist())
+        unsafe = [name for name in available if not check_safe_archive_member(name)]
         if unsafe:
             raise RuntimeError(f"unsafe archive member(s) in qasmbench: {unsafe}")
 
-        qasm_members = sorted(name for name in archive.namelist() if name.endswith(".qasm"))
+        benchmark_dirs = sorted(
+            {str(Path(name).parent) for name in available if name.endswith(".qasm")}
+        )
+        for bench_dir in benchmark_dirs:
+            bench_name = Path(bench_dir).name
+            required = [f"{bench_name}.qasm", f"{bench_name}_transpiled.qasm"]
+            missing = check_required_members(available, bench_dir, required)
+            if missing:
+                raise RuntimeError(
+                    f"missing required companion file(s) for {bench_dir}: {missing}"
+                )
+
+        qasm_members = sorted(name for name in available if name.endswith(".qasm"))
 
         for member_name in qasm_members:
             content = archive.read(member_name).decode("utf-8")
@@ -774,6 +907,7 @@ def prepare_qasmbench(
 
 def run(run_id: str) -> StageResult:
     result = StageResult(stage="prepare_data", run_id=run_id)
+    started_at = datetime.now(UTC).isoformat()
 
     settings = Settings.from_environment()
     client = minio_client(settings)
@@ -823,11 +957,109 @@ def run(run_id: str) -> StageResult:
     all_issues.extend(qasm_issues)
 
     results_dir = _results_root()
+    results_dir.mkdir(parents=True, exist_ok=True)
     write_local_parquet(
         results_dir / "source_trace.parquet",
         pa.Table.from_pylist(all_traces, schema=SOURCE_TRACE_SCHEMA),
     )
     write_data_issues(results_dir / "data_issues.parquet", all_issues)
+
+    finished_at = datetime.now(UTC).isoformat()
+
+    run_json = {
+        "run_id": run_id,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "code_revision": _code_revision(),
+        "input_hashes": {
+            "qec_syndromes": _manifest_sha256(SYNDROME_BRONZE_OBJECT),
+            "google_qec": _manifest_sha256(GOOGLE_BRONZE_OBJECT),
+            "qasmbench": _manifest_sha256(QASMBENCH_BRONZE_OBJECT),
+        },
+        "output_row_counts": {
+            "silver/qec_syndromes/syndrome_observation.parquet": len(syndrome_records),
+            "silver/google_qec/experiment.parquet": len(experiment_records),
+            "silver/google_qec/shot.parquet": len(shot_records),
+            "silver/qasmbench/circuit.parquet": len(circuit_rows),
+            "silver/qasmbench/stabilizer_check.parquet": len(stab_rows),
+            "silver/qasmbench/conditional_correction.parquet": len(corr_rows),
+            "results/part1/source_trace.parquet": len(all_traces),
+            "results/part1/data_issues.parquet": len(all_issues),
+        },
+    }
+    (results_dir / "run.json").write_text(json.dumps(run_json, indent=2))
+
+    syndrome_rows_rejected = _count_issues(syndrome_issues, rule_ids={"syndrome_row_validity"})
+    syndrome_files_rejected = _count_issues(
+        syndrome_issues, rule_ids={"filename_fault_rate", "syndrome_schema"}
+    )
+    syndrome_quantity_warnings = _count_issues(syndrome_issues, rule_ids={"quantity_reconciliation"})
+    google_shots_rejected = _count_issues(
+        google_issues, rule_ids={"measurement_padding_nonzero", "sweep_padding_nonzero"}
+    )
+    qasm_filtered_statements = _count_issues(qasm_issues, rule_ids={"stabilizer_check_filter"})
+
+    row_counts_json = {
+        "qec_syndromes": {
+            "rows_read": len(syndrome_records) + syndrome_rows_rejected,
+            "rows_accepted": len(syndrome_records),
+            "rows_rejected": syndrome_rows_rejected,
+            "files_rejected": syndrome_files_rejected,
+            "quantity_reconciliation_warnings": syndrome_quantity_warnings,
+        },
+        "google_qec": {
+            "experiments_accepted": len(experiment_records),
+            "shots_read": len(shot_records) + google_shots_rejected,
+            "shots_accepted": len(shot_records),
+            "shots_rejected": google_shots_rejected,
+        },
+        "qasmbench": {
+            "circuits_accepted": len(circuit_rows),
+            "stabilizer_checks_accepted": len(stab_rows),
+            "corrections_accepted": len(corr_rows),
+            "measurement_statements_filtered": qasm_filtered_statements,
+        },
+        "silver_to_gold": (
+            "not yet available -- Gold is not implemented yet; this section will "
+            "be added once the Gold load exists."
+        ),
+    }
+    (results_dir / "row_counts.json").write_text(json.dumps(row_counts_json, indent=2))
+
+    syndrome_example = None
+    if syndrome_records:
+        example = syndrome_records[0]
+        syndrome_example = {
+            "source_record_id": example["source_record_id"],
+            "silver_row": {**example, "syndrome_bits": example["syndrome_bits"].hex()},
+            "trace_rows": [
+                trace for trace in syndrome_traces
+                if trace["source_record_id"] == example["source_record_id"]
+            ],
+        }
+
+    google_example = None
+    if shot_records:
+        example = shot_records[0]
+        google_example = {
+            "source_record_id": example["source_record_id"],
+            "silver_row": {
+                **example,
+                "measurement_bits": example["measurement_bits"].hex(),
+                "sweep_bits": example["sweep_bits"].hex(),
+                "detector_bits": example["detector_bits"].hex(),
+            },
+            "trace_rows": [
+                trace for trace in google_traces
+                if trace["source_record_id"] == example["source_record_id"]
+            ],
+        }
+
+    trace_examples_json = {
+        "syndrome_prediction": syndrome_example,
+        "google_prediction": google_example,
+    }
+    (results_dir / "trace_examples.json").write_text(json.dumps(trace_examples_json, indent=2))
 
     result.input_count = (
         len(syndrome_records) + len(syndrome_issues)
