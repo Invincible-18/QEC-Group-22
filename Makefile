@@ -3,7 +3,7 @@
 PYTHON ?= python3
 COMPOSE ?= docker compose
 
-.PHONY: help config data-verify docs-verify build up seed verify bootstrap ps logs down reset-platform
+.PHONY: help config data-verify docs-verify build up seed verify bootstrap run-part1 ps logs down reset-platform
 
 help:
 	@echo "Quantum data lake course platform"
@@ -14,6 +14,8 @@ help:
 	@echo "  make up              Start PostgreSQL, MinIO, Adminer, and JupyterLab"
 	@echo "  make seed            Copy course inputs into the Bronze data area"
 	@echo "  make verify          Check that the platform and data are ready"
+	@echo "  make run-part1       Run Part I in the workspace container, recording the"
+	@echo "                       current git commit as run.json's code_revision"
 	@echo "  make ps              Show service status"
 	@echo "  make logs            Follow service logs"
 	@echo "  make down            Stop services while retaining data volumes"
@@ -47,6 +49,13 @@ bootstrap: config build up seed verify
 	@echo "  JupyterLab: http://localhost:8888/lab?token=quantum-course"
 	@echo "  MinIO:      http://localhost:9001"
 	@echo "  Adminer:    http://localhost:8080"
+
+run-part1:
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "Uncommitted changes present -- commit before recording a final run.json code_revision." >&2; \
+		exit 1; \
+	fi
+	$(COMPOSE) exec -e CODE_REVISION=$$(git rev-parse HEAD) workspace python -m quantum_lake_student.cli run
 
 ps:
 	$(COMPOSE) ps
