@@ -10,6 +10,8 @@ from rich.table import Table
 
 from .config import Settings
 from .connections import bronze_inventory, check_platform
+from .stages.build_ml_tables import run as run_build_ml_tables
+from .stages.load_postgres import run as run_load_postgres
 from .stages.prepare_data import run as run_prepare_data
 
 
@@ -39,6 +41,13 @@ def command_run(_: Settings) -> int:
     console.print(
         f"[green]OK[/green] prepare_data: {result.output_count:,} Silver rows written, "
         f"{result.issue_count:,} issues"
+    )
+    gold = run_load_postgres(run_id)
+    console.print(f"[green]OK[/green] load_postgres: {gold.output_count:,} Gold rows loaded")
+    analyses = run_build_ml_tables(run_id)
+    console.print(
+        f"[green]OK[/green] build_ml_tables: {analyses.output_count} analysis result(s) "
+        "in results/part1/analysis (ML export not added yet)"
     )
     return 0
 
