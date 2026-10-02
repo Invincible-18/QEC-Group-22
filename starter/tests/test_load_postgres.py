@@ -8,7 +8,8 @@ from psycopg import sql
 
 from quantum_lake_student.config import Settings
 from quantum_lake_student.connections import postgres_connection
-from quantum_lake_student.stages.load_postgres import rebuild_gold, validate_google
+from quantum_lake_student.stages.gold_google import validate_google
+from quantum_lake_student.stages.load_postgres import rebuild_gold
 from quantum_lake_student.stages.prepare_data import (
     GOOGLE_EXPERIMENT_SCHEMA,
     GOOGLE_SHOT_SCHEMA,
