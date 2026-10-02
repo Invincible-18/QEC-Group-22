@@ -44,10 +44,10 @@ def command_run(_: Settings) -> int:
     )
     gold = run_load_postgres(run_id)
     console.print(f"[green]OK[/green] load_postgres: {gold.output_count:,} Gold rows loaded")
-    analyses = run_build_ml_tables(run_id)
+    ml = run_build_ml_tables(run_id)
     console.print(
-        f"[green]OK[/green] build_ml_tables: {analyses.output_count} analysis result(s) "
-        "in results/part1/analysis (ML export not added yet)"
+        f"[green]OK[/green] build_ml_tables: analyses in results/part1/analysis, "
+        f"{ml.output_count:,} rows in ml_google_decoder_example (syndrome table not added yet)"
     )
     return 0
 
