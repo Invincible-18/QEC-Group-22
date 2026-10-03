@@ -8,7 +8,7 @@ from psycopg import sql
 
 from quantum_lake_student.config import Settings
 from quantum_lake_student.connections import postgres_connection
-from gold_test_data import qasmbench_silver
+from gold_test_data import other_sources_silver
 from quantum_lake_student.stages.gold_google import GOOGLE_GOLD_TABLES, validate_google
 from quantum_lake_student.stages.load_postgres import rebuild_gold
 from quantum_lake_student.stages.prepare_data import (
@@ -65,7 +65,7 @@ def silver(
         ],
         schema=GOOGLE_SHOT_SCHEMA,
     )
-    return {"google_experiment": experiment, "google_shot": shots, **qasmbench_silver()}
+    return {"google_experiment": experiment, "google_shot": shots, **other_sources_silver()}
 
 
 @pytest.fixture

@@ -39,12 +39,13 @@ from quantum_lake_student.stages.gold_qasmbench import (
     load_qasmbench,
     validate_qasmbench,
 )
+from quantum_lake_student.stages.gold_syndrome import SYNDROME_SILVER_TABLES, load_syndrome
 from quantum_lake_student.stages.prepare_data import _results_root
 
 
 GOLD_SCHEMA = "gold"
 
-SILVER_TABLES = {**GOOGLE_SILVER_TABLES, **QASMBENCH_SILVER_TABLES}
+SILVER_TABLES = {**GOOGLE_SILVER_TABLES, **QASMBENCH_SILVER_TABLES, **SYNDROME_SILVER_TABLES}
 
 
 # ============================================================================
@@ -76,6 +77,8 @@ def rebuild_gold(
         connection.execute(QASMBENCH_TABLES)
         counts |= load_qasmbench(connection, silver)
         validate_qasmbench(connection, silver)
+
+        counts |= load_syndrome(connection, silver)
     return counts
 
 
@@ -121,6 +124,17 @@ def _record_counts(run_id: str, silver: dict[str, pa.Table], counts: dict[str, i
             ("qasm_stabilizer_check", "stabilizer_check"),
             ("qasm_conditional_correction", "conditional_correction"),
         )
+    }
+    row_counts["silver_to_gold"]["qec_syndromes"] = {
+        SYNDROME_SILVER_TABLES["syndrome_observation"]: {
+            "silver_rows": silver["syndrome_observation"].num_rows,
+            "gold_table": f"{GOLD_SCHEMA}.syndrome_observation",
+            "gold_rows": counts["syndrome_observation"],
+        },
+        "derived_in_gold": {
+            f"{GOLD_SCHEMA}.syndrome_experiment": counts["syndrome_experiment"],
+            f"{GOLD_SCHEMA}.syndrome_pattern": counts["syndrome_pattern"],
+        },
     }
     row_counts_path.write_text(json.dumps(row_counts, indent=2))
 

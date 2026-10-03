@@ -12,6 +12,7 @@ from quantum_lake_student.stages.prepare_data import (
     CIRCUIT_SCHEMA,
     CONDITIONAL_CORRECTION_SCHEMA,
     STABILIZER_CHECK_SCHEMA,
+    SYNDROME_SCHEMA,
 )
 
 
@@ -70,3 +71,30 @@ def qasmbench_silver() -> dict[str, pa.Table]:
         "qasm_stabilizer_check": checks,
         "qasm_conditional_correction": corrections,
     }
+
+
+def syndrome_silver() -> dict[str, pa.Table]:
+    """One syndrome pattern observed under both labels in one experiment."""
+    pattern = bytes([0, 1] * 8)
+    rows = pa.Table.from_pylist(
+        [
+            {
+                "source_record_id": f"syndrome-record-{label}",
+                "experiment_id": "qec_syndromes/d-3_pfr-0.001000_nb-10M",
+                "physical_fault_rate": 0.001,
+                "syndrome_bits": pattern,
+                "round_count": 4,
+                "check_count": 4,
+                "logical_error_label": label,
+                "quantity": quantity,
+            }
+            for label, quantity in ((False, 7), (True, 2))
+        ],
+        schema=SYNDROME_SCHEMA,
+    )
+    return {"syndrome_observation": rows}
+
+
+def other_sources_silver() -> dict[str, pa.Table]:
+    """Silver for every source except Google, for tests that build their own Google rows."""
+    return {**qasmbench_silver(), **syndrome_silver()}

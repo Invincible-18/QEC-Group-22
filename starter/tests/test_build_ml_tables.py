@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from gold_test_data import qasmbench_silver
+from gold_test_data import other_sources_silver
 import psycopg
 import pyarrow as pa
 import pytest
@@ -70,7 +70,7 @@ def google_silver() -> dict[str, pa.Table]:
 @pytest.fixture
 def gold(connection):
     schema = f"gold_test_{uuid4().hex[:8]}"
-    rebuild_gold(connection, {**google_silver(), **qasmbench_silver()}, schema=schema)
+    rebuild_gold(connection, {**google_silver(), **other_sources_silver()}, schema=schema)
     yield connection, schema
     connection.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
 
