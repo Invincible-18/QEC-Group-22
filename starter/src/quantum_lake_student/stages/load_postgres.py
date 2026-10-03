@@ -33,12 +33,18 @@ from quantum_lake_student.stages.gold_google import (
     load_google,
     validate_google,
 )
+from quantum_lake_student.stages.gold_qasmbench import (
+    QASMBENCH_SILVER_TABLES,
+    QASMBENCH_TABLES,
+    load_qasmbench,
+    validate_qasmbench,
+)
 from quantum_lake_student.stages.prepare_data import _results_root
 
 
 GOLD_SCHEMA = "gold"
 
-SILVER_TABLES = {**GOOGLE_SILVER_TABLES}
+SILVER_TABLES = {**GOOGLE_SILVER_TABLES, **QASMBENCH_SILVER_TABLES}
 
 
 # ============================================================================
@@ -66,6 +72,10 @@ def rebuild_gold(
         connection.execute(GOOGLE_TABLES)
         counts = load_google(connection, silver["google_experiment"], silver["google_shot"])
         validate_google(connection, silver["google_experiment"], silver["google_shot"])
+
+        connection.execute(QASMBENCH_TABLES)
+        counts |= load_qasmbench(connection, silver)
+        validate_qasmbench(connection, silver)
     return counts
 
 
@@ -99,6 +109,18 @@ def _record_counts(run_id: str, silver: dict[str, pa.Table], counts: dict[str, i
             f"{GOLD_SCHEMA}.detector_position_summary": counts["detector_position_summary"],
             f"{GOLD_SCHEMA}.decoder": counts["decoder"],
         },
+    }
+    row_counts["silver_to_gold"]["qasmbench"] = {
+        QASMBENCH_SILVER_TABLES[silver_name]: {
+            "silver_rows": silver[silver_name].num_rows,
+            "gold_table": f"{GOLD_SCHEMA}.{gold_table}",
+            "gold_rows": counts[gold_table],
+        }
+        for silver_name, gold_table in (
+            ("qasm_circuit", "circuit"),
+            ("qasm_stabilizer_check", "stabilizer_check"),
+            ("qasm_conditional_correction", "conditional_correction"),
+        )
     }
     row_counts_path.write_text(json.dumps(row_counts, indent=2))
 

@@ -8,7 +8,8 @@ from psycopg import sql
 
 from quantum_lake_student.config import Settings
 from quantum_lake_student.connections import postgres_connection
-from quantum_lake_student.stages.gold_google import validate_google
+from gold_test_data import qasmbench_silver
+from quantum_lake_student.stages.gold_google import GOOGLE_GOLD_TABLES, validate_google
 from quantum_lake_student.stages.load_postgres import rebuild_gold
 from quantum_lake_student.stages.prepare_data import (
     GOOGLE_EXPERIMENT_SCHEMA,
@@ -64,7 +65,7 @@ def silver(
         ],
         schema=GOOGLE_SHOT_SCHEMA,
     )
-    return {"google_experiment": experiment, "google_shot": shots}
+    return {"google_experiment": experiment, "google_shot": shots, **qasmbench_silver()}
 
 
 @pytest.fixture
@@ -87,7 +88,8 @@ def query(connection: psycopg.Connection, schema: str, statement: str) -> list[t
 
 def test_rebuild_loads_one_gold_row_per_silver_row(database) -> None:
     connection, schema = database
-    assert rebuild_gold(connection, silver(), schema=schema) == {
+    counts = rebuild_gold(connection, silver(), schema=schema)
+    assert {table: counts[table] for table in GOOGLE_GOLD_TABLES} == {
         "hardware_experiment": 1,
         "shot": 3,
         "decoder": 4,
