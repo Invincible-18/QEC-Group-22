@@ -2,7 +2,10 @@
 
 Question: How do weighted syndrome frequency and logical-error labels change with physical fault rate?
 
-The reproducible PostgreSQL query is in `syndrome_q1.sql`. It joins `gold.syndrome_observation` to `gold.syndrome_experiment`, groups by fault rate and distinct syndrome pattern, and uses `quantity` as the observation weight. Each query result row represents one syndrome pattern at one fault rate.
+The reproducible PostgreSQL queries are run against Gold by the pipeline, and each result is written to this folder as a CSV:
+
+- `sql/q1a_syndrome_by_fault_rate.sql` gives one row per fault rate: the overall results table below and the all-zero pattern figures.
+- `sql/q1b_syndrome_pattern_frequency.sql` gives one row per syndrome pattern at one fault rate. It joins `gold.syndrome_observation` to `gold.syndrome_experiment`, groups by fault rate and distinct syndrome pattern, and uses `quantity` as the observation weight.
 
 Definitions:
 
