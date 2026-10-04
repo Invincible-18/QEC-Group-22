@@ -147,30 +147,17 @@ def _record_counts(run_id: str, silver: dict[str, pa.Table], counts: dict[str, i
     run_path.write_text(json.dumps(run_record, indent=2))
 
 
-def _add_gold_to_trace_example(connection: psycopg.Connection) -> None:
-    """Extend the Google trace example with its Gold record.
-
-    The chain then reads from the ML example id, through Gold and Silver, down to
-    the Bronze files. The prediction step gets added once Part II exists.
-    """
-    path = _results_root() / "trace_examples.json"
-    if not path.exists():
-        return
-    examples = json.loads(path.read_text())
-    google = examples.get("google_prediction")
-    if not google:
-        return
-
+def _google_gold_record(connection: psycopg.Connection, source_record_id: str) -> tuple | None:
     schema = sql.Identifier(GOLD_SCHEMA)
     shot = connection.execute(
         sql.SQL(
             "SELECT example_id, experiment_id, shot_index, actual_observable_flip "
             "FROM {}.shot WHERE source_record_id = %s"
         ).format(schema),
-        (google["source_record_id"],),
+        (source_record_id,),
     ).fetchone()
     if shot is None:
-        return
+        return None
     example_id, experiment_id, shot_index, actual = shot
     predictions = dict(
         connection.execute(
@@ -181,19 +168,63 @@ def _add_gold_to_trace_example(connection: psycopg.Connection) -> None:
             (experiment_id, shot_index),
         ).fetchall()
     )
-
-    rest = {key: value for key, value in google.items() if key not in ("example_id", "gold_record")}
-    examples["google_prediction"] = {
-        "example_id": example_id,
-        "gold_record": {
-            "table": f"{GOLD_SCHEMA}.shot",
-            "experiment_id": experiment_id,
-            "shot_index": shot_index,
-            "actual_observable_flip": actual,
-            "predictions": predictions,
-        },
-        **rest,
+    return example_id, {
+        "table": f"{GOLD_SCHEMA}.shot",
+        "experiment_id": experiment_id,
+        "shot_index": shot_index,
+        "actual_observable_flip": actual,
+        "predictions": predictions,
     }
+
+
+def _syndrome_gold_record(connection: psycopg.Connection, source_record_id: str) -> tuple | None:
+    row = connection.execute(
+        sql.SQL(
+            "SELECT example.example_id, example.experiment_id, example.syndrome_pattern_id, "
+            "       example.logical_error_label, observation.quantity "
+            "FROM {schema}.syndrome_example AS example "
+            "JOIN {schema}.syndrome_observation AS observation USING (source_record_id) "
+            "WHERE example.source_record_id = %s"
+        ).format(schema=sql.Identifier(GOLD_SCHEMA)),
+        (source_record_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    example_id, experiment_id, pattern_id, label, quantity = row
+    return example_id, {
+        "table": f"{GOLD_SCHEMA}.syndrome_observation",
+        "view": f"{GOLD_SCHEMA}.syndrome_example",
+        "experiment_id": experiment_id,
+        "syndrome_pattern_id": pattern_id,
+        "logical_error_label": label,
+        "quantity": quantity,
+    }
+
+
+def _add_gold_to_trace_example(connection: psycopg.Connection) -> None:
+    """Extend the syndrome and Google trace examples with their Gold records.
+
+    Each chain then reads from the ML example id, through Gold and Silver, down to
+    the Bronze files. The prediction step gets added once Part II exists.
+    """
+    path = _results_root() / "trace_examples.json"
+    if not path.exists():
+        return
+    examples = json.loads(path.read_text())
+
+    for key, gold_record in (
+        ("syndrome_prediction", _syndrome_gold_record),
+        ("google_prediction", _google_gold_record),
+    ):
+        example = examples.get(key)
+        if not example:
+            continue
+        found = gold_record(connection, example["source_record_id"])
+        if found is None:
+            continue
+        example_id, record = found
+        rest = {k: v for k, v in example.items() if k not in ("example_id", "gold_record")}
+        examples[key] = {"example_id": example_id, "gold_record": record, **rest}
     path.write_text(json.dumps(examples, indent=2))
 
 
