@@ -73,21 +73,26 @@ def qasmbench_silver() -> dict[str, pa.Table]:
     }
 
 
+# one fault rate per course split: train, validation, test
+SYNDROME_FAULT_RATES = (0.001, 0.0005, 0.005)
+
+
 def syndrome_silver() -> dict[str, pa.Table]:
-    """One syndrome pattern observed under both labels in one experiment."""
+    """One syndrome pattern observed under both labels, at three fault rates."""
     pattern = bytes([0, 1] * 8)
     rows = pa.Table.from_pylist(
         [
             {
-                "source_record_id": f"syndrome-record-{label}",
-                "experiment_id": "qec_syndromes/d-3_pfr-0.001000_nb-10M",
-                "physical_fault_rate": 0.001,
+                "source_record_id": f"syndrome-record-{rate}-{label}",
+                "experiment_id": f"qec_syndromes/d-3_pfr-{rate:.6f}_nb-10M",
+                "physical_fault_rate": rate,
                 "syndrome_bits": pattern,
                 "round_count": 4,
                 "check_count": 4,
                 "logical_error_label": label,
                 "quantity": quantity,
             }
+            for rate in SYNDROME_FAULT_RATES
             for label, quantity in ((False, 7), (True, 2))
         ],
         schema=SYNDROME_SCHEMA,

@@ -74,6 +74,22 @@ TABLE_COMMENTS = (
     "COMMENT ON TABLE syndrome_observation IS "
     "'One original aggregate CSV observation, linked to its experiment and syndrome pattern.'",
 )
+# One row represents one ML example: one distinct (experiment, syndrome pattern,
+# label) observation. Each such combination is one Silver row, so example_id
+# resolves to exactly one syndrome_observation.
+CREATE_EXAMPLE_VIEW = """
+CREATE VIEW syndrome_example AS
+SELECT encode(sha256(convert_to(
+           'qec_syndromes:' || observation.experiment_id || ':'
+           || encode(pattern.syndrome_bits, 'hex') || ':'
+           || observation.logical_error_label::text, 'UTF8')), 'hex') AS example_id,
+       observation.source_record_id,
+       observation.experiment_id,
+       observation.syndrome_pattern_id,
+       observation.logical_error_label
+FROM syndrome_observation AS observation
+JOIN syndrome_pattern AS pattern USING (syndrome_pattern_id)
+"""
 
 
 def _as_syndrome_bytes(value: Any) -> bytes:
@@ -157,6 +173,7 @@ def load_syndrome(connection: psycopg.Connection, silver: dict[str, pa.Table]) -
         CREATE_OBSERVATION_TABLE,
         *CREATE_INDEXES,
         *TABLE_COMMENTS,
+        CREATE_EXAMPLE_VIEW,
     ):
         connection.execute(statement)
 

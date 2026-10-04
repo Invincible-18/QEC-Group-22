@@ -10,7 +10,7 @@ as a CSV in results/part1/analysis/.
 ML tables: each table comes from a committed query in sql/ml_*.sql run against
 Gold. Python only adds the course data_split, checks the contract from
 required-ml-tables.md, and writes Parquet to the ml/ zone. Nothing is written
-unless every check passes. The syndrome table is added once its Gold tables exist.
+unless every check on both tables passes.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from quantum_lake_student.ml import (
     MODEL_SPLITS,
     google_data_split,
     google_meta_model_input,
+    syndrome_data_split,
+    syndrome_model_input,
     unpack_little_endian_bits,
 )
 from quantum_lake_student.models import StageResult
@@ -44,6 +46,22 @@ from quantum_lake_student.stages.prepare_data import _results_root
 SQL_DIR = Path(__file__).resolve().parents[3] / "sql"
 
 ML_GOOGLE_OBJECT = "ml/ml_google_decoder_example.parquet"
+ML_SYNDROME_OBJECT = "ml/ml_syndrome_decoder_example.parquet"
+
+# Column order and types from required-ml-tables.md.
+ML_SYNDROME_SCHEMA = pa.schema(
+    [
+        ("example_id", pa.string()),
+        ("experiment_id", pa.string()),
+        ("physical_fault_rate", pa.float64()),
+        ("syndrome_bits", pa.binary()),
+        ("round_count", pa.int32()),
+        ("check_count", pa.int32()),
+        ("logical_error_label", pa.bool_()),
+        ("sample_weight", pa.int64()),
+        ("data_split", pa.string()),
+    ]
+)
 
 # Column order and types from required-ml-tables.md.
 ML_GOOGLE_SCHEMA = pa.schema(
@@ -168,6 +186,79 @@ def build_google_ml_table(
 
 
 # ============================================================================
+# ml_syndrome_decoder_example
+# ============================================================================
+
+
+def check_syndrome_examples(rows: list[dict], gold_weight_by_experiment: dict[str, int]) -> None:
+    """Raise if the exported rows break the contract in required-ml-tables.md."""
+    failures: list[str] = []
+
+    if len({row["example_id"] for row in rows}) != len(rows):
+        failures.append("example_id is not unique")
+
+    split_sizes = Counter(row["data_split"] for row in rows)
+    failures.extend(f"{split} split is empty" for split in MODEL_SPLITS if not split_sizes[split])
+
+    # a whole fault-rate experiment has to stay in one split
+    splits_by_experiment: dict[str, set[str]] = defaultdict(set)
+    weight_by_experiment: Counter = Counter()
+    bad = Counter()
+    for row in rows:
+        splits_by_experiment[row["experiment_id"]].add(row["data_split"])
+        weight_by_experiment[row["experiment_id"]] += row["sample_weight"]
+        try:
+            syndrome_model_input(row["syndrome_bits"])
+        except ValueError:
+            bad["syndrome_bits is not exactly 16 binary values"] += 1
+        if (row["round_count"], row["check_count"]) != (4, 4):
+            bad["round_count and check_count are not 4"] += 1
+        if not isinstance(row["logical_error_label"], bool):
+            bad["logical_error_label is missing or not binary"] += 1
+        if row["sample_weight"] <= 0:
+            bad["sample_weight is not positive"] += 1
+        if row["data_split"] != syndrome_data_split(row["physical_fault_rate"]):
+            bad["data_split differs from syndrome_data_split"] += 1
+
+    failures.extend(
+        f"{experiment} is spread over splits {sorted(found)}"
+        for experiment, found in splits_by_experiment.items()
+        if len(found) != 1
+    )
+    if dict(weight_by_experiment) != gold_weight_by_experiment:
+        failures.append("sample_weight totals per experiment differ from Gold quantity totals")
+    failures.extend(f"{rule} ({count} rows)" for rule, count in bad.items())
+
+    if failures:
+        raise RuntimeError("ml_syndrome_decoder_example contract failed: " + "; ".join(failures))
+
+
+def build_syndrome_ml_table(
+    connection: psycopg.Connection,
+    *,
+    schema: str = GOLD_SCHEMA,
+    sql_dir: Path = SQL_DIR,
+) -> pa.Table:
+    """Query Gold for the syndrome ML table, add data_split, and check the contract."""
+    query = (sql_dir / "ml_syndrome_decoder_example.sql").read_text()
+    with connection.transaction():
+        connection.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
+        gold_weight_by_experiment = dict(
+            connection.execute(
+                "SELECT experiment_id, sum(quantity)::bigint FROM syndrome_observation "
+                "GROUP BY experiment_id"
+            ).fetchall()
+        )
+        with connection.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(query).fetchall()
+
+    for row in rows:
+        row["data_split"] = syndrome_data_split(row["physical_fault_rate"])
+    check_syndrome_examples(rows, gold_weight_by_experiment)
+    return pa.Table.from_pylist(rows, schema=ML_SYNDROME_SCHEMA)
+
+
+# ============================================================================
 # stage
 # ============================================================================
 
@@ -189,10 +280,14 @@ def run(run_id: str) -> StageResult:
         connection.autocommit = True
         run_analyses(connection, _results_root() / "analysis")
         google = build_google_ml_table(connection)
+        syndrome = build_syndrome_ml_table(connection)
 
-    write_parquet(minio_client(settings), settings.s3_bucket, ML_GOOGLE_OBJECT, google)
-    _record_ml_counts({ML_GOOGLE_OBJECT: google.num_rows})
+    # both tables pass their checks before either is written
+    client = minio_client(settings)
+    write_parquet(client, settings.s3_bucket, ML_GOOGLE_OBJECT, google)
+    write_parquet(client, settings.s3_bucket, ML_SYNDROME_OBJECT, syndrome)
+    _record_ml_counts({ML_GOOGLE_OBJECT: google.num_rows, ML_SYNDROME_OBJECT: syndrome.num_rows})
 
-    result.output_count = google.num_rows
+    result.output_count = google.num_rows + syndrome.num_rows
     result.finish()
     return result

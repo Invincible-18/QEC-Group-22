@@ -47,7 +47,7 @@ def command_run(_: Settings) -> int:
     ml = run_build_ml_tables(run_id)
     console.print(
         f"[green]OK[/green] build_ml_tables: analyses in results/part1/analysis, "
-        f"{ml.output_count:,} rows in ml_google_decoder_example (syndrome table not added yet)"
+        f"{ml.output_count:,} rows across ml_google_decoder_example and ml_syndrome_decoder_example"
     )
     return 0
 

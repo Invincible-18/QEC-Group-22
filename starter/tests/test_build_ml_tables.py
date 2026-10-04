@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from gold_test_data import other_sources_silver
+from gold_test_data import SYNDROME_FAULT_RATES, other_sources_silver, syndrome_silver
 import psycopg
 import pyarrow as pa
 import pytest
@@ -10,8 +10,11 @@ from quantum_lake_student.config import Settings
 from quantum_lake_student.connections import postgres_connection
 from quantum_lake_student.stages.build_ml_tables import (
     ML_GOOGLE_SCHEMA,
+    ML_SYNDROME_SCHEMA,
     build_google_ml_table,
+    build_syndrome_ml_table,
     check_google_examples,
+    check_syndrome_examples,
     run_analyses,
 )
 from quantum_lake_student.stages.load_postgres import rebuild_gold
@@ -173,3 +176,77 @@ def test_check_google_examples_rejects_empty_split() -> None:
         row["data_split"] = "train"
     with pytest.raises(RuntimeError, match="validation split is empty"):
         check_google_examples(rows, gold_shot_count=3)
+
+
+# --- ml_syndrome_decoder_example -----------------------------------------------
+
+
+def test_syndrome_ml_table_matches_contract_and_gold(gold) -> None:
+    connection, schema = gold
+    table = build_syndrome_ml_table(connection, schema=schema)
+
+    assert table.schema == ML_SYNDROME_SCHEMA
+    rows = table.to_pylist()
+    silver = syndrome_silver()["syndrome_observation"].to_pylist()
+    assert len(rows) == len(silver)
+
+    expected_split = dict(zip(SYNDROME_FAULT_RATES, ("train", "validation", "test")))
+    for row in rows:
+        assert row["data_split"] == expected_split[row["physical_fault_rate"]]
+        assert (row["round_count"], row["check_count"]) == (4, 4)
+    # weights are the Silver quantities, per experiment and label
+    assert sorted((r["experiment_id"], r["logical_error_label"], r["sample_weight"]) for r in rows) == sorted(
+        (s["experiment_id"], s["logical_error_label"], s["quantity"]) for s in silver
+    )
+
+    # every example_id resolves to exactly one Gold observation through the view
+    resolved = connection.execute(
+        sql.SQL(
+            "SELECT example_id, count(*) FROM {}.syndrome_example GROUP BY example_id"
+        ).format(sql.Identifier(schema))
+    ).fetchall()
+    assert dict(resolved) == {row["example_id"]: 1 for row in rows}
+
+
+def test_syndrome_example_ids_survive_a_full_rebuild(gold) -> None:
+    connection, schema = gold
+    first = build_syndrome_ml_table(connection, schema=schema).column("example_id").to_pylist()
+    rebuild_gold(connection, {**google_silver(), **other_sources_silver()}, schema=schema)
+    second = build_syndrome_ml_table(connection, schema=schema).column("example_id").to_pylist()
+    assert first == second
+
+
+def _syndrome_row(experiment: str, rate: float, split: str, weight: int) -> dict:
+    return {
+        "example_id": f"{experiment}-{split}-{weight}",
+        "experiment_id": experiment,
+        "physical_fault_rate": rate,
+        "syndrome_bits": bytes(16),
+        "round_count": 4,
+        "check_count": 4,
+        "logical_error_label": False,
+        "sample_weight": weight,
+        "data_split": split,
+    }
+
+
+def _valid_syndrome_rows() -> list[dict]:
+    return [
+        _syndrome_row("e-train", 0.001, "train", 5),
+        _syndrome_row("e-validation", 0.0005, "validation", 5),
+        _syndrome_row("e-test", 0.005, "test", 5),
+    ]
+
+
+def test_check_syndrome_examples_rejects_a_split_fault_rate_group() -> None:
+    gold_weights = {"e-train": 10, "e-validation": 5, "e-test": 5}
+    rows = [*_valid_syndrome_rows(), _syndrome_row("e-train", 0.001, "test", 5)]
+    with pytest.raises(RuntimeError, match="e-train is spread over splits"):
+        check_syndrome_examples(rows, gold_weights)
+
+
+def test_check_syndrome_examples_rejects_weights_that_differ_from_gold() -> None:
+    rows = _valid_syndrome_rows()
+    check_syndrome_examples(rows, {"e-train": 5, "e-validation": 5, "e-test": 5})
+    with pytest.raises(RuntimeError, match="differ from Gold quantity totals"):
+        check_syndrome_examples(rows, {"e-train": 6, "e-validation": 5, "e-test": 5})
