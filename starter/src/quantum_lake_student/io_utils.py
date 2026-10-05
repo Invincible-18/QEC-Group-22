@@ -125,14 +125,17 @@ def data_issue_row(
 ) -> dict:
     """Turn a supplied QualityFinding into one data_issues.parquet row.
 
-    ``issue_id`` is a stable hash of the run, rule, source record, and
-    observed value, so repeated runs on unchanged input produce the same
-    identifier instead of a new one each time.
+    ``issue_id`` is a hash of what was found and where (rule, source system,
+    record locator, source record, observed value). The run is left out, so a
+    rerun on unchanged input gives the same identifier; the locator keeps two
+    identical findings at different places (e.g. the same QASM line in two
+    circuits) apart.
     """
     issue_id = stable_record_hash(
         {
-            "run_id": run_id,
             "rule_id": finding.rule_id,
+            "source_system": finding.source_system,
+            "source_record_locator": finding.source_record_locator,
             "source_record_id": source_record_id,
             "observed_value": finding.observed_value,
         }
