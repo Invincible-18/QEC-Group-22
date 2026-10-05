@@ -61,11 +61,17 @@ def command_train(_: Settings) -> int:
     return 2
 
 
+def command_rerun_check(_: Settings) -> int:
+    from .rerun_check import main as rerun_check_main
+
+    return rerun_check_main()
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument(
         "command",
-        choices=("check", "inventory", "run", "train"),
+        choices=("check", "inventory", "run", "rerun-check", "train"),
         help="Action to perform",
     )
     return result
@@ -78,6 +84,7 @@ def main() -> None:
         "check": command_check,
         "inventory": command_inventory,
         "run": command_run,
+        "rerun-check": command_rerun_check,
         "train": command_train,
     }
     raise SystemExit(commands[arguments.command](settings))
