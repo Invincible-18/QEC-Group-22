@@ -25,6 +25,7 @@ from quantum_lake_student.stages.load_postgres import GOLD_SCHEMA
 from quantum_lake_student.stages.load_postgres import run as run_load_postgres
 from quantum_lake_student.stages.prepare_data import _results_root
 from quantum_lake_student.stages.prepare_data import run as run_prepare_data
+from quantum_lake_student.stages.register_sources import run as run_register_sources
 
 
 SILVER_OBJECTS = (
@@ -101,6 +102,7 @@ def fingerprint(settings: Settings) -> dict:
 
 
 def _run_part1(run_id: str) -> None:
+    run_register_sources(run_id)
     run_prepare_data(run_id)
     run_load_postgres(run_id)
     run_build_ml_tables(run_id)

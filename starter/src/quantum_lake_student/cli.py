@@ -13,6 +13,7 @@ from .connections import bronze_inventory, check_platform
 from .stages.build_ml_tables import run as run_build_ml_tables
 from .stages.load_postgres import run as run_load_postgres
 from .stages.prepare_data import run as run_prepare_data
+from .stages.register_sources import run as run_register_sources
 
 
 console = Console()
@@ -37,6 +38,11 @@ def command_inventory(settings: Settings) -> int:
 
 def command_run(_: Settings) -> int:
     run_id = datetime.now(UTC).strftime("part1-%Y%m%dT%H%M%SZ")
+    bronze = run_register_sources(run_id)
+    console.print(
+        f"[green]OK[/green] register_sources: {bronze.output_count} Bronze objects verified "
+        "against the release manifest"
+    )
     result = run_prepare_data(run_id)
     console.print(
         f"[green]OK[/green] prepare_data: {result.output_count:,} Silver rows written, "
