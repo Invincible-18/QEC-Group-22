@@ -59,12 +59,15 @@ def command_run(_: Settings) -> int:
 
 
 def command_train(_: Settings) -> int:
+    from .stages.train import run as run_train
+
+    model_run_id = datetime.now(UTC).strftime("part2-%Y%m%dT%H%M%SZ")
+    result = run_train(model_run_id)
     console.print(
-        "[yellow]The AI/ML stage is intentionally unimplemented.[/yellow]\n"
-        "Consume the required ML input tables through the supplied helpers and "
-        "write model files and the required results/part2 files."
+        f"[green]OK[/green] train: {result.output_count} models evaluated from "
+        f"{result.input_count:,} ML rows; results in results/part2"
     )
-    return 2
+    return 0
 
 
 def command_rerun_check(_: Settings) -> int:
