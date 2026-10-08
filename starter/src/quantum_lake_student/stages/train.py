@@ -50,7 +50,7 @@ from quantum_lake_student.stages.part2_metrics import (
     logical_error_rate,
 )
 from quantum_lake_student.stages.prepare_data import _code_revision
-from quantum_lake_student.stages.train_google import run_task_b
+from quantum_lake_student.stages.train_google import decoder_error_overlap, run_task_b
 from quantum_lake_student.stages.train_raw_detector import run_task_c
 from quantum_lake_student.stages.train_syndrome import run_task_a
 
@@ -294,6 +294,7 @@ def run(model_run_id: str) -> StageResult:
 
     results = run_tasks(task_inputs(syndrome, google), seed=SEED)
     metrics = evaluate(results)
+    metrics["task_b_decoder_error_overlap"] = decoder_error_overlap(results)
 
     release = json.loads(get_object_bytes(client, settings.s3_bucket, RELEASE_MANIFEST_OBJECT))
     run_record = {
