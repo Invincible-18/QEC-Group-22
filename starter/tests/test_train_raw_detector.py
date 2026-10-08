@@ -1,13 +1,14 @@
+import types
+
 import numpy as np
 import pytest
 
 pytest.importorskip("sklearn")
 
-from quantum_lake_student.stages.part2_helpers import ModelResult
+from quantum_lake_student.stages.part2_helpers import ModelResult, choose_threshold
 from quantum_lake_student.stages.train import TaskSpec, check_predictions
 from quantum_lake_student.stages.train_raw_detector import (
     LABEL_COLUMN,
-    _choose_threshold,
     _features,
     run_task_c,
 )
@@ -104,12 +105,37 @@ def test_training_rows_are_not_predicted_and_test_does_not_change_the_fit() -> N
     assert [p["probability"] for p in reference.predictions] == [p["probability"] for p in other.predictions]
 
 
-def test_threshold_is_chosen_from_validation_labels_only() -> None:
-    labels = np.array([False, False, True, True])
-    probabilities = np.array([0.1, 0.2, 0.7, 0.8])
-    threshold = _choose_threshold(labels, probabilities)
-    assert 0.2 < threshold <= 0.7
-    # a different validation set moves the threshold: only validation decides it
-    shifted = _choose_threshold(labels, np.array([0.1, 0.6, 0.85, 0.9]))
-    assert 0.6 < shifted <= 0.85
+def test_threshold_is_the_team_rule_applied_to_validation_rows_only() -> None:
+    splits = _splits()
+    mlp = run_task_c(splits, seed=5)[1]
+    validation = [p for p in mlp.predictions if p["split"] == "validation"]
+    expected = choose_threshold([p["label"] for p in validation], [p["probability"] for p in validation])
+    assert mlp.threshold == expected
+
+
+def test_event_count_matches_the_set_detector_bits() -> None:
+    splits = _splits(sizes=(20, 6, 6))
+    matrix = _features(splits["train"])
+    assert matrix.sum(axis=1).tolist() == [row["detector_event_count"] for row in splits["train"]]
+
+
+@pytest.mark.parametrize("split", ["train", "validation", "test"])
+def test_wrong_event_count_is_rejected(split: str) -> None:
+    splits = _splits(sizes=(20, 6, 6))
+    splits[split][0]["detector_event_count"] += 1
+    with pytest.raises(ValueError, match=f"{split} rows have detector_event_count"):
+        run_task_c(splits, seed=1)
+
+
+def test_only_the_fit_and_the_test_prediction_are_timed(monkeypatch) -> None:
+    from quantum_lake_student.stages import train_raw_detector as module
+
+    # only two start/stop pairs exist: fit takes 10, test prediction takes 30
+    ticks = iter([0.0, 10.0, 20.0, 50.0])
+    fake_time = types.SimpleNamespace(perf_counter=lambda: next(ticks))
+    monkeypatch.setattr(module, "time", fake_time)
+    baseline, mlp = module.run_task_c(_splits(sizes=(30, 10, 10)), seed=2)
+    assert mlp.train_seconds == 10.0
+    assert mlp.predict_seconds == 30.0
+    assert baseline.train_seconds is None and baseline.predict_seconds is None
 
