@@ -31,6 +31,10 @@ class ModelResult:
     fitted_model: object | None = None   # saved by train.py; None for baselines and supplied decoders
     feature_order: list[str] = field(default_factory=list)
     threshold: float | None = None       # chosen on validation only
+    # Timing rule, checked by train.py: with a fitted_model, train_seconds times
+    # only model.fit(...) and predict_seconds only the test-split prediction
+    # (building inputs is not timed). Without a fitted_model (baselines,
+    # supplied decoders) both stay None.
     train_seconds: float | None = None
     predict_seconds: float | None = None
 

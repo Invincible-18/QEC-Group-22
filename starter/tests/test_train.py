@@ -211,3 +211,23 @@ def test_report_rejects_an_unknown_placeholder(tmp_path) -> None:
 def test_committed_report_templates_render() -> None:
     report = render_report(REPORT_DIR, {})
     assert "{{" not in report and "<!--" not in report
+
+
+# --- timing rule ---------------------------------------------------------------------
+
+
+def test_check_enforces_the_timing_rule() -> None:
+    splits = _splits()
+
+    baseline = _result(splits)
+    baseline.train_seconds = 0.0  # a baseline is not trained, so it has no time
+    with pytest.raises(RuntimeError, match="must have no times"):
+        check_predictions(baseline, SPEC_A, splits)
+
+    fitted = _result(splits)
+    fitted.fitted_model = object()
+    with pytest.raises(RuntimeError, match="needs train_seconds"):
+        check_predictions(fitted, SPEC_A, splits)
+
+    fitted.train_seconds, fitted.predict_seconds = 0.4, 0.1
+    check_predictions(fitted, SPEC_A, splits)

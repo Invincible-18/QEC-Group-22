@@ -162,6 +162,12 @@ def check_predictions(result: ModelResult, spec: TaskSpec, splits: Splits) -> No
     if spec.table == "google_bounded" and result.distance != TASK_C_DISTANCE:
         problems.append(f"Task C uses distance {TASK_C_DISTANCE} only")
 
+    times = (result.train_seconds, result.predict_seconds)
+    if result.fitted_model is None and times != (None, None):
+        problems.append("a model without fitted_model (baseline, supplied decoder) must have no times")
+    if result.fitted_model is not None and any(t is None or t < 0 for t in times):
+        problems.append("a fitted model needs train_seconds (fit only) and predict_seconds (test prediction only)")
+
     expected = {
         (row["example_id"], split): row
         for split in PREDICTED_SPLITS
@@ -407,6 +413,10 @@ def run(model_run_id: str) -> StageResult:
         },
         "random_seed": SEED,
         "split_rules": SPLIT_RULES,
+        "timing_rule": (
+            "train_seconds times only model.fit(); predict_seconds times only predicting the "
+            "test split; building inputs is not timed; null for baselines and supplied decoders"
+        ),
         "python": platform.python_version(),
         "dependencies": {name: metadata.version(name) for name in DEPENDENCIES},
     }
