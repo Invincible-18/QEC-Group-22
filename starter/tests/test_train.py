@@ -5,7 +5,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from quantum_lake_student.stages.build_ml_tables import ML_SYNDROME_SCHEMA
-from quantum_lake_student.stages.part2_helpers import ModelResult, majority_baseline, prediction_rows
+from quantum_lake_student.stages.part2_helpers import (
+    ModelResult,
+    choose_threshold,
+    majority_baseline,
+    prediction_rows,
+)
 from quantum_lake_student.stages.part2_metrics import (
     balanced_accuracy,
     brier_score,
@@ -157,3 +162,23 @@ def test_write_outputs_writes_every_file_and_drops_old_models(tmp_path) -> None:
     run_record = json.loads((tmp_path / "run.json").read_text())
     assert run_record["models"]["task_a_model"]["model_file"] == "models/task_a_model.joblib"
     assert [path.name for path in (tmp_path / "models").iterdir()] == ["task_a_model.joblib"]
+
+
+# --- the shared threshold rule ---------------------------------------------------
+
+
+def test_choose_threshold_picks_the_lowest_logical_error_rate() -> None:
+    labels = [False, False, True, True]
+    # any threshold in (0.30, 0.70] separates the classes; the lowest such grid value is kept
+    assert choose_threshold(labels, [0.10, 0.30, 0.70, 0.90]) == 0.31
+
+
+def test_choose_threshold_uses_the_weights() -> None:
+    labels = [False, True]
+    probabilities = [0.40, 0.20]
+    # unweighted: every threshold makes exactly one mistake, so the lowest is kept
+    assert choose_threshold(labels, probabilities) == 0.05
+    # the error shot counts 9 times as much, so catching it (threshold <= 0.20) wins
+    assert choose_threshold(labels, probabilities, weights=[1, 9]) <= 0.20
+    # the fine shot counts 9 times as much, so not flagging it (threshold > 0.40) wins
+    assert choose_threshold(labels, probabilities, weights=[9, 1]) > 0.40
