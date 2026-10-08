@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import platform
+import re
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -57,6 +58,7 @@ from quantum_lake_student.stages.train_syndrome import run_task_a
 
 SEED = 2026
 PART2_ROOT = Path("/workspace/results/part2")
+REPORT_DIR = Path(__file__).resolve().parents[3] / "docs" / "part2-report"
 RELEASE_MANIFEST_OBJECT = "metadata/course-release/bundle-manifest.json"
 
 TASK_C_DISTANCE = 3
@@ -277,6 +279,98 @@ def write_outputs(out_dir: Path, results: list[ModelResult], metrics: dict, run_
 
 
 # ============================================================================
+# report.md
+# ============================================================================
+
+TASKS_IN_REPORT = ("A", "B", "C")
+OVERLAP_KEY = "task_b_decoder_error_overlap"
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-z0-9_]+)\s*\}\}")
+_COMMENT = re.compile(r"<!--.*?-->\s*", re.DOTALL)
+
+
+def _cell(value, digits: int = 4) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:.{digits}f}"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
+def _results_table(models: dict[str, dict], *, with_task: bool = False) -> str:
+    """One row per model, from the metrics written to metrics.json."""
+    if not models:
+        return "_No models in this run._"
+    header = ["Model", "Distance", "Test rows", "Test weight", "Logical-error rate",
+              "Balanced accuracy", "Brier score", "Train s", "Predict s"]
+    if with_task:
+        header.insert(0, "Task")
+    lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    for model_id, m in models.items():
+        cells = [
+            model_id, _cell(m["distance"]), _cell(m["test_examples"]), _cell(m["test_weight"]),
+            _cell(m["logical_error_rate"]), _cell(m["balanced_accuracy"]), _cell(m["brier_score"]),
+            _cell(m["train_seconds"], 3), _cell(m["predict_seconds"], 3),
+        ]
+        if with_task:
+            cells.insert(0, m["task"])
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _overlap_table(overlap: dict | None) -> str:
+    """Task B's decoder-overlap summary: one column per distance, one row per value."""
+    if not overlap:
+        return "_Not available in this run._"
+    columns = list(overlap)
+    rows: dict[str, dict[str, object]] = {}
+    for column, values in overlap.items():
+        for key, value in values.items():
+            if isinstance(value, dict):
+                for name, inner in value.items():
+                    rows.setdefault(f"{key}: {name}", {})[column] = inner
+            else:
+                rows.setdefault(key, {})[column] = value
+    lines = ["| | " + " | ".join(columns) + " |", "|" + "---|" * (len(columns) + 1)]
+    for label, by_column in rows.items():
+        lines.append(f"| {label.replace('_', ' ')} | "
+                     + " | ".join(_cell(by_column.get(c)) for c in columns) + " |")
+    return "\n".join(lines)
+
+
+def report_tables(metrics: dict) -> dict[str, str]:
+    """Every placeholder the report templates may use."""
+    every_model = {
+        model_id: {**values, "task": task}
+        for task in TASKS_IN_REPORT
+        for model_id, values in metrics.get(task, {}).items()
+    }
+    return {
+        "task_a_results": _results_table(metrics.get("A", {})),
+        "task_b_results": _results_table(metrics.get("B", {})),
+        "task_c_results": _results_table(metrics.get("C", {})),
+        "task_b_overlap": _overlap_table(metrics.get(OVERLAP_KEY)),
+        "all_results": _results_table(every_model, with_task=True),
+    }
+
+
+def render_report(report_dir: Path, metrics: dict) -> str:
+    """Join the report templates in name order and fill every {{placeholder}}."""
+    sections = sorted(report_dir.glob("*.md"))
+    if not sections:
+        raise RuntimeError(f"no report templates in {report_dir}")
+    text = _COMMENT.sub("", "\n\n".join(path.read_text().strip() for path in sections))
+
+    tables = report_tables(metrics)
+    unknown = sorted(set(_PLACEHOLDER.findall(text)) - tables.keys())
+    if unknown:
+        raise RuntimeError(f"unknown report placeholder(s): {unknown}; known: {sorted(tables)}")
+    text = _PLACEHOLDER.sub(lambda match: tables[match.group(1)], text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+
+
+# ============================================================================
 # stage
 # ============================================================================
 
@@ -317,6 +411,7 @@ def run(model_run_id: str) -> StageResult:
         "dependencies": {name: metadata.version(name) for name in DEPENDENCIES},
     }
     write_outputs(PART2_ROOT, results, metrics, run_record)
+    (PART2_ROOT / "report.md").write_text(render_report(REPORT_DIR, metrics))
 
     result.input_count = syndrome.num_rows + google.num_rows
     result.output_count = len(results)

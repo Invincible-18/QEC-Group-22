@@ -18,9 +18,11 @@ from quantum_lake_student.stages.part2_metrics import (
 )
 from quantum_lake_student.stages.train import (
     PREDICTIONS_SCHEMA,
+    REPORT_DIR,
     TaskSpec,
     check_predictions,
     evaluate,
+    render_report,
     run_tasks,
     task_inputs,
     validate_ml_table,
@@ -182,3 +184,30 @@ def test_choose_threshold_uses_the_weights() -> None:
     assert choose_threshold(labels, probabilities, weights=[1, 9]) <= 0.20
     # the fine shot counts 9 times as much, so not flagging it (threshold > 0.40) wins
     assert choose_threshold(labels, probabilities, weights=[9, 1]) > 0.40
+
+
+# --- report.md ------------------------------------------------------------------------
+
+
+def test_report_joins_sections_in_name_order_and_fills_tables(tmp_path) -> None:
+    (tmp_path / "20_end.md").write_text("## End\n\n{{all_results}}")
+    (tmp_path / "10_task.md").write_text("## Task A\n<!-- a note for the writer -->\n{{task_a_results}}")
+    splits = _splits()
+    metrics = evaluate([_result(splits)])
+
+    report = render_report(tmp_path, metrics)
+
+    assert report.index("## Task A") < report.index("## End")
+    assert "a note for the writer" not in report and "{{" not in report
+    assert "| task_a_model | n/a | 2 | 10 | 0.0000 | 1.0000 | n/a |" in report
+
+
+def test_report_rejects_an_unknown_placeholder(tmp_path) -> None:
+    (tmp_path / "10_task.md").write_text("{{task_a_reslts}}")
+    with pytest.raises(RuntimeError, match="unknown report placeholder"):
+        render_report(tmp_path, {})
+
+
+def test_committed_report_templates_render() -> None:
+    report = render_report(REPORT_DIR, {})
+    assert "{{" not in report and "<!--" not in report
