@@ -11,11 +11,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from quantum_lake_student.stages.part2_metrics import logical_error_rate
+
 
 # {"train": [...], "validation": [...], "test": [...]}; each row is one ML-table row
 Splits = dict[str, list[dict]]
 
 PREDICTED_SPLITS = ("validation", "test")
+
+THRESHOLD_GRID = tuple(round(0.05 + 0.01 * step, 2) for step in range(91))  # 0.05 .. 0.95
 
 
 @dataclass
@@ -27,6 +31,10 @@ class ModelResult:
     fitted_model: object | None = None   # saved by train.py; None for baselines and supplied decoders
     feature_order: list[str] = field(default_factory=list)
     threshold: float | None = None       # chosen on validation only
+    # Timing rule, checked by train.py: with a fitted_model, train_seconds times
+    # only model.fit(...) and predict_seconds only the test-split prediction
+    # (building inputs is not timed). Without a fitted_model (baselines,
+    # supplied decoders) both stay None.
     train_seconds: float | None = None
     predict_seconds: float | None = None
 
@@ -62,6 +70,27 @@ def prediction_rows(
         }
         for index, (row, prediction) in enumerate(zip(rows, predictions))
     ]
+
+
+def choose_threshold(
+    labels: Sequence[bool],
+    probabilities: Sequence[float],
+    weights: Sequence[float] | None = None,
+) -> float:
+    """The team's threshold rule, to be called with validation rows only.
+
+    Picks the THRESHOLD_GRID value with the lowest logical-error rate, weighted
+    by ``weights`` (Task A passes sample_weight; Tasks B and C pass nothing).
+    Equal error rates keep the lowest such threshold.
+    """
+    if weights is None:
+        weights = [1.0] * len(labels)
+    return min(
+        THRESHOLD_GRID,
+        key=lambda threshold: logical_error_rate(
+            labels, [probability >= threshold for probability in probabilities], weights
+        ),
+    )
 
 
 def majority_baseline(
