@@ -168,7 +168,7 @@ def test_rejects_a_distance_with_an_empty_split() -> None:
         run_task_b(splits, seed=1)
 
 
-def test_decoder_error_overlap_counts_shared_mistakes_on_test_shots_only() -> None:
+def test_decoder_error_overlap_gives_shares_of_the_test_shots_only() -> None:
     answers = {
         "belief_matching": [True, False, True, False],
         "correlated_matching": [True, False, True, False],
@@ -201,7 +201,8 @@ def test_decoder_error_overlap_counts_shared_mistakes_on_test_shots_only() -> No
     assert list(overlap) == ["d3"]
     d3 = overlap["d3"]
     assert d3["test_shots"] == 4
-    assert d3["all_four_right"] == 1 and d3["all_four_wrong"] == 1 and d3["decoders_disagree"] == 2
+    assert d3["all_four_right"] == 0.25 and d3["all_four_wrong"] == 0.25
+    assert d3["decoders_disagree"] == 0.5
     assert d3["error_rate_where_decoders_disagree"] == {
         "belief_matching": 0.5,
         "correlated_matching": 0.5,
@@ -209,6 +210,6 @@ def test_decoder_error_overlap_counts_shared_mistakes_on_test_shots_only() -> No
         "tensor_network_contraction": 0.0,
         "combined": 0.5,
     }
-    assert d3["combined_wrong_where_all_four_right"] == 0
-    assert d3["combined_wrong_where_all_four_wrong"] == 1
-    assert d3["all_four_wrong_if_mistakes_were_unrelated"] == pytest.approx(0.125)
+    assert d3["combined_wrong_where_all_four_right"] == 0.0
+    assert d3["combined_wrong_where_all_four_wrong"] == 1.0
+    assert d3["all_four_wrong_if_mistakes_were_unrelated"] == pytest.approx(0.5 * 0.5 * 0.5 * 0.25)

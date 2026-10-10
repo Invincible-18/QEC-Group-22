@@ -139,9 +139,14 @@ def run_task_b(splits: Splits, *, seed: int) -> list[ModelResult]:
     return results
 
 
+def _share(part: set, whole: set) -> float | None:
+    return len(part) / len(whole) if whole else None
+
+
 def decoder_error_overlap(results: list[ModelResult]) -> dict[str, dict]:
     """Whether the four supplied decoders get the same test shots wrong, and what
-    the combined model does on those shots."""
+    the combined model does on those shots. Every value except test_shots is a
+    share between 0 and 1."""
     decoders = [column.removesuffix("_prediction") for column in GOOGLE_META_PREDICTION_COLUMNS]
     overlap = {}
     for distance in DISTANCES:
@@ -160,20 +165,21 @@ def decoder_error_overlap(results: list[ModelResult]) -> dict[str, dict]:
             for name, rows in test.items()
         }
         all_wrong = set.intersection(*(wrong[name] for name in decoders))
-        any_wrong = set.union(*(wrong[name] for name in decoders))
-        disagree = any_wrong - all_wrong
-        unrelated = len(shots) * math.prod(len(wrong[name]) / len(shots) for name in decoders)
+        all_right = shots - set.union(*(wrong[name] for name in decoders))
+        disagree = shots - all_wrong - all_right
         overlap[f"d{distance}"] = {
             "test_shots": len(shots),
-            "all_four_right": len(shots - any_wrong),
-            "all_four_wrong": len(all_wrong),
-            "all_four_wrong_if_mistakes_were_unrelated": unrelated,
-            "decoders_disagree": len(disagree),
+            "all_four_right": _share(all_right, shots),
+            "all_four_wrong": _share(all_wrong, shots),
+            "all_four_wrong_if_mistakes_were_unrelated": math.prod(
+                _share(wrong[name], shots) for name in decoders
+            ),
+            "decoders_disagree": _share(disagree, shots),
             "error_rate_where_decoders_disagree": {
-                name: len(wrong[name] & disagree) / len(disagree) if disagree else None
+                name: _share(wrong[name] & disagree, disagree)
                 for name in [*decoders, "combined"]
             },
-            "combined_wrong_where_all_four_right": len(wrong["combined"] - any_wrong),
-            "combined_wrong_where_all_four_wrong": len(wrong["combined"] & all_wrong),
+            "combined_wrong_where_all_four_right": _share(wrong["combined"] & all_right, all_right),
+            "combined_wrong_where_all_four_wrong": _share(wrong["combined"] & all_wrong, all_wrong),
         }
     return overlap
