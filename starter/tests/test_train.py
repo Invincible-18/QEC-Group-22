@@ -5,7 +5,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from quantum_lake_student.stages.build_ml_tables import ML_SYNDROME_SCHEMA
-from quantum_lake_student.stages.part2_helpers import ModelResult, majority_baseline, prediction_rows
+from quantum_lake_student.stages.part2_helpers import (
+    ModelResult,
+    choose_threshold,
+    majority_baseline,
+    prediction_rows,
+)
 from quantum_lake_student.stages.part2_metrics import (
     balanced_accuracy,
     brier_score,
@@ -13,9 +18,11 @@ from quantum_lake_student.stages.part2_metrics import (
 )
 from quantum_lake_student.stages.train import (
     PREDICTIONS_SCHEMA,
+    REPORT_DIR,
     TaskSpec,
     check_predictions,
     evaluate,
+    render_report,
     run_tasks,
     task_inputs,
     validate_ml_table,
@@ -157,3 +164,70 @@ def test_write_outputs_writes_every_file_and_drops_old_models(tmp_path) -> None:
     run_record = json.loads((tmp_path / "run.json").read_text())
     assert run_record["models"]["task_a_model"]["model_file"] == "models/task_a_model.joblib"
     assert [path.name for path in (tmp_path / "models").iterdir()] == ["task_a_model.joblib"]
+
+
+# --- the shared threshold rule ---------------------------------------------------
+
+
+def test_choose_threshold_picks_the_lowest_logical_error_rate() -> None:
+    labels = [False, False, True, True]
+    # any threshold in (0.30, 0.70] separates the classes; the lowest such grid value is kept
+    assert choose_threshold(labels, [0.10, 0.30, 0.70, 0.90]) == 0.31
+
+
+def test_choose_threshold_uses_the_weights() -> None:
+    labels = [False, True]
+    probabilities = [0.40, 0.20]
+    # unweighted: every threshold makes exactly one mistake, so the lowest is kept
+    assert choose_threshold(labels, probabilities) == 0.05
+    # the error shot counts 9 times as much, so catching it (threshold <= 0.20) wins
+    assert choose_threshold(labels, probabilities, weights=[1, 9]) <= 0.20
+    # the fine shot counts 9 times as much, so not flagging it (threshold > 0.40) wins
+    assert choose_threshold(labels, probabilities, weights=[9, 1]) > 0.40
+
+
+# --- report.md ------------------------------------------------------------------------
+
+
+def test_report_joins_sections_in_name_order_and_fills_tables(tmp_path) -> None:
+    (tmp_path / "20_end.md").write_text("## End\n\n{{all_results}}")
+    (tmp_path / "10_task.md").write_text("## Task A\n<!-- a note for the writer -->\n{{task_a_results}}")
+    splits = _splits()
+    metrics = evaluate([_result(splits)])
+
+    report = render_report(tmp_path, metrics)
+
+    assert report.index("## Task A") < report.index("## End")
+    assert "a note for the writer" not in report and "{{" not in report
+    assert "| task_a_model | n/a | 2 | 10 | 0.0000 | 1.0000 | n/a |" in report
+
+
+def test_report_rejects_an_unknown_placeholder(tmp_path) -> None:
+    (tmp_path / "10_task.md").write_text("{{task_a_reslts}}")
+    with pytest.raises(RuntimeError, match="unknown report placeholder"):
+        render_report(tmp_path, {})
+
+
+def test_committed_report_templates_render() -> None:
+    report = render_report(REPORT_DIR, {})
+    assert "{{" not in report and "<!--" not in report
+
+
+# --- timing rule ---------------------------------------------------------------------
+
+
+def test_check_enforces_the_timing_rule() -> None:
+    splits = _splits()
+
+    baseline = _result(splits)
+    baseline.train_seconds = 0.0  # a baseline is not trained, so it has no time
+    with pytest.raises(RuntimeError, match="must have no times"):
+        check_predictions(baseline, SPEC_A, splits)
+
+    fitted = _result(splits)
+    fitted.fitted_model = object()
+    with pytest.raises(RuntimeError, match="needs train_seconds"):
+        check_predictions(fitted, SPEC_A, splits)
+
+    fitted.train_seconds, fitted.predict_seconds = 0.4, 0.1
+    check_predictions(fitted, SPEC_A, splits)
