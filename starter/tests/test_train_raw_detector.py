@@ -3,8 +3,6 @@ import types
 import numpy as np
 import pytest
 
-pytest.importorskip("sklearn")
-
 from quantum_lake_student.stages.part2_helpers import ModelResult, choose_threshold
 from quantum_lake_student.stages.train import TaskSpec, check_predictions
 from quantum_lake_student.stages.train_raw_detector import (
@@ -41,12 +39,19 @@ def _splits(seed: int = 0, sizes=(200, 60, 60)) -> dict[str, list[dict]]:
     }
 
 
-def test_features_unpack_little_endian_and_discard_padding() -> None:
+def test_features_unpack_little_endian() -> None:
     row = {"detector_bits": bytes([0b00000101] + [0] * 24), "detector_count": 200}
     matrix = _features([row])
     assert matrix.shape == (1, 200)
     assert matrix[0, :3].tolist() == [1, 0, 1]
     assert matrix.sum() == 2
+
+
+def test_features_discard_padding_bits() -> None:
+    # 12 detectors fill 1.5 bytes: the top four bits of the second byte are padding
+    row = {"detector_bits": bytes([0b11110101, 0b11111000]), "detector_count": 12}
+    matrix = _features([row])
+    assert matrix[0].tolist() == [1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1]
 
 
 def test_features_reject_wrong_packed_length() -> None:

@@ -25,6 +25,7 @@ from quantum_lake_student.stages.train import (
     render_report,
     run_tasks,
     task_inputs,
+    trace_predictions,
     validate_ml_table,
     write_outputs,
 )
@@ -164,6 +165,21 @@ def test_write_outputs_writes_every_file_and_drops_old_models(tmp_path) -> None:
     run_record = json.loads((tmp_path / "run.json").read_text())
     assert run_record["models"]["task_a_model"]["model_file"] == "models/task_a_model.joblib"
     assert [path.name for path in (tmp_path / "models").iterdir()] == ["task_a_model.joblib"]
+
+
+def test_trace_predictions_adds_every_model_prediction_for_the_example() -> None:
+    splits = _splits()
+    results = [_result(splits, model_id="task_a_one"), _result(splits, model_id="task_a_two")]
+    trace = trace_predictions({"syndrome_prediction": {"example_id": "ex-3", "gold_record": {}}}, results)
+    assert trace["syndrome_prediction"]["example_id"] == "ex-3"
+    assert set(trace["syndrome_prediction"]["predictions"]) == {"task_a_one", "task_a_two"}
+    assert trace["syndrome_prediction"]["predictions"]["task_a_one"]["split"] == "test"
+
+
+def test_trace_predictions_rejects_a_training_example() -> None:
+    splits = _splits()
+    with pytest.raises(RuntimeError, match="has no prediction"):
+        trace_predictions({"syndrome_prediction": {"example_id": "ex-0"}}, [_result(splits)])
 
 
 # --- the shared threshold rule ---------------------------------------------------

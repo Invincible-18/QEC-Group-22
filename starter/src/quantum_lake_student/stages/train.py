@@ -58,6 +58,7 @@ from quantum_lake_student.stages.train_syndrome import run_task_a
 
 SEED = 2026
 PART2_ROOT = Path("/workspace/results/part2")
+PART1_TRACE_EXAMPLES = Path("/workspace/results/part1/trace_examples.json")
 REPORT_DIR = Path(__file__).resolve().parents[3] / "docs" / "part2-report"
 RELEASE_MANIFEST_OBJECT = "metadata/course-release/bundle-manifest.json"
 
@@ -250,6 +251,27 @@ def evaluate(results: list[ModelResult]) -> dict:
     return metrics
 
 
+def trace_predictions(trace_examples: dict, results: list[ModelResult]) -> dict:
+    """The last step of Part I's traces: every model's prediction on each example.
+
+    trace_examples.json traces one syndrome and one Google example_id from ML
+    back to Bronze; this adds the predictions made for that example_id.
+    """
+    traces = {}
+    for name, example in trace_examples.items():
+        example_id = example["example_id"]
+        predictions = {
+            result.model_id: {key: p[key] for key in ("split", "label", "prediction", "probability")}
+            for result in results
+            for p in result.predictions
+            if p["example_id"] == example_id
+        }
+        if not predictions:
+            raise RuntimeError(f"{name}: example {example_id} has no prediction (is it a test row?)")
+        traces[name] = {"example_id": example_id, "predictions": predictions}
+    return traces
+
+
 def write_outputs(out_dir: Path, results: list[ModelResult], metrics: dict, run_record: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     models_dir = out_dir / "models"
@@ -423,6 +445,8 @@ def run(model_run_id: str) -> StageResult:
     }
     write_outputs(PART2_ROOT, results, metrics, run_record)
     (PART2_ROOT / "report.md").write_text(render_report(REPORT_DIR, metrics))
+    trace = trace_predictions(json.loads(PART1_TRACE_EXAMPLES.read_text()), results)
+    (PART2_ROOT / "trace_predictions.json").write_text(json.dumps(trace, indent=2))
 
     result.input_count = syndrome.num_rows + google.num_rows
     result.output_count = len(results)

@@ -73,9 +73,9 @@ def _combined_decoder(splits: Splits, distance: int, seed: int) -> ModelResult:
     model_id = f"task_b_d{distance}_combined"
     model = LogisticRegression(random_state=seed)
 
-    x_train = _features(splits["train"])
+    x_train, y_train = _features(splits["train"]), _labels(splits["train"])
     started = time.perf_counter()
-    model.fit(x_train, _labels(splits["train"]))
+    model.fit(x_train, y_train)
     train_seconds = time.perf_counter() - started
     flip = list(model.classes_).index(True)  # the probability column for "flip"
 

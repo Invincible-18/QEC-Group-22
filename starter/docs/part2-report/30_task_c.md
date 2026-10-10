@@ -20,8 +20,12 @@
   hidden layer of 32 units, `max_iter=50` and the fixed seed. It takes a
   fixed-width binary vector and needs no hand-built features, so it fits this
   table. The subset is bounded, so a small network keeps the run short. This is
-  a pipeline-consumer check, so no other architectures or hyper-parameters
-  were tried.
+  a pipeline-consumer check, so no other architectures were tried.
+- **Training length:** the fit stops after 50 passes over the training data,
+  before scikit-learn considers it converged, so it reports a
+  `ConvergenceWarning`. This is on purpose: in a check with more passes, the
+  network fitted the training shots more closely without improving on new
+  shots, so longer training only overfits.
 - **Threshold:** chosen with the team rule `choose_threshold`, called with
   validation rows only. It picks the grid value with the lowest validation
   logical-error rate. Test rows never influence the fit or the threshold.
