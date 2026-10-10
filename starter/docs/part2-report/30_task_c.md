@@ -45,6 +45,11 @@ whether the MLP detects flips at all or only follows the common label. If the
 MLP is not better than the baseline, that is the result and it is reported as
 observed.
 
+The MLP's Brier score is worse than the baseline's: its probabilities are often
+far from one half while its predictions are no better than chance, so it is
+overconfident, a sign that it fits patterns of the training shots that do not
+hold for new shots.
+
 ### Discarded information
 
 A flat vector of 200 bits gives the MLP 200 unrelated inputs. It does not show
