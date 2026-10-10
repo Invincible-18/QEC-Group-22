@@ -18,16 +18,15 @@ from quantum_lake_student.stages.part2_helpers import (
     PREDICTED_SPLITS,
     ModelResult,
     Splits,
+    choose_threshold,
     majority_baseline,
     prediction_rows,
 )
-from quantum_lake_student.stages.part2_metrics import balanced_accuracy
 
 
 DISTANCES = (3, 5)
 LABEL_COLUMN = "actual_observable_flip"
 FEATURE_ORDER = ["detector_event_density", *GOOGLE_META_PREDICTION_COLUMNS]
-THRESHOLDS = [round(0.05 + 0.01 * step, 2) for step in range(91)]
 
 
 def _rows_for_distance(splits: Splits, distance: int) -> Splits:
@@ -69,18 +68,6 @@ def _labels(rows: list[dict]) -> list[bool]:
     return [bool(row[LABEL_COLUMN]) for row in rows]
 
 
-def _choose_threshold(labels: list[bool], probabilities: np.ndarray) -> float:
-    """The threshold with the best balanced accuracy."""
-    weights = [1.0] * len(labels)
-    return max(
-        THRESHOLDS,
-        key=lambda threshold: (
-            balanced_accuracy(labels, (probabilities >= threshold).tolist(), weights),
-            -abs(threshold - 0.5),
-        ),
-    )
-
-
 def _combined_decoder(splits: Splits, distance: int, seed: int) -> ModelResult:
     """Logistic regression on the five helper inputs: fit on train, threshold on validation."""
     model_id = f"task_b_d{distance}_combined"
@@ -93,7 +80,7 @@ def _combined_decoder(splits: Splits, distance: int, seed: int) -> ModelResult:
     flip = list(model.classes_).index(True)  # the probability column for "flip"
 
     validation_probabilities = model.predict_proba(_features(splits["validation"]))[:, flip]
-    threshold = _choose_threshold(_labels(splits["validation"]), validation_probabilities)
+    threshold = choose_threshold(_labels(splits["validation"]), validation_probabilities.tolist())
 
     x_test = _features(splits["test"])
     started = time.perf_counter()

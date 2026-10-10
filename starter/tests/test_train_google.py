@@ -2,13 +2,16 @@ import numpy as np
 import pytest
 
 from quantum_lake_student.ml import GOOGLE_META_PREDICTION_COLUMNS
-from quantum_lake_student.stages.part2_helpers import ModelResult, prediction_rows
+from quantum_lake_student.stages.part2_helpers import (
+    THRESHOLD_GRID,
+    ModelResult,
+    choose_threshold,
+    prediction_rows,
+)
 from quantum_lake_student.stages.train import TaskSpec, check_predictions
 from quantum_lake_student.stages.train_google import (
     FEATURE_ORDER,
     LABEL_COLUMN,
-    THRESHOLDS,
-    _choose_threshold,
     _features,
     decoder_error_overlap,
     run_task_b,
@@ -112,7 +115,7 @@ def test_combined_model_records_its_fit_threshold_and_times() -> None:
     assert combined.model_id == "task_b_d3_combined"
     assert combined.fitted_model.n_features_in_ == 5
     assert combined.feature_order == FEATURE_ORDER
-    assert combined.threshold in THRESHOLDS
+    assert combined.threshold in THRESHOLD_GRID
     assert combined.train_seconds >= 0 and combined.predict_seconds >= 0
     for p in combined.predictions:
         assert 0.0 <= p["probability"] <= 1.0
@@ -132,12 +135,14 @@ def test_test_labels_change_neither_the_fit_nor_the_threshold() -> None:
         ]
 
 
-def test_threshold_is_the_best_balanced_accuracy_nearest_one_half() -> None:
-    labels = [False, False, True, True]
-    # every threshold in (0.2, 0.7] separates the two classes; 0.5 is nearest one half
-    assert _choose_threshold(labels, np.array([0.1, 0.2, 0.7, 0.8])) == 0.5
-    # other validation probabilities move it
-    assert _choose_threshold(labels, np.array([0.1, 0.6, 0.85, 0.9])) == 0.61
+def test_combined_threshold_is_the_shared_rule_on_validation() -> None:
+    splits = _splits()
+    combined = run_task_b(splits, seed=1)[5]
+    validation = [row for row in splits["validation"] if row["distance"] == 3]
+    flip = list(combined.fitted_model.classes_).index(True)
+    probabilities = combined.fitted_model.predict_proba(_features(validation))[:, flip]
+    labels = [row[LABEL_COLUMN] for row in validation]
+    assert combined.threshold == choose_threshold(labels, probabilities.tolist())
 
 
 def test_run_is_repeatable() -> None:
