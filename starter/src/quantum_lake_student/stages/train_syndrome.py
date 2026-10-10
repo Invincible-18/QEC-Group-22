@@ -15,8 +15,11 @@ from sklearn.linear_model import LogisticRegression
 
 from quantum_lake_student.ml import syndrome_model_input
 from quantum_lake_student.stages.part2_helpers import ModelResult, Splits
-from quantum_lake_student.stages.part2_helpers import majority_baseline, prediction_rows
-from quantum_lake_student.stages.part2_metrics import balanced_accuracy
+from quantum_lake_student.stages.part2_helpers import (
+    choose_threshold,
+    majority_baseline,
+    prediction_rows,
+)
 
 
 LABEL_COLUMN = "logical_error_label"
@@ -30,25 +33,12 @@ def _features(rows: list[dict]) -> np.ndarray:
     )
 
 
-def _select_threshold(labels: list[bool], probabilities: np.ndarray, weights: list[float]) -> float:
-    unique = np.unique(probabilities)
-    candidates = {0.0, 0.5, 1.0, *(float(value) for value in unique)}
-    candidates.update(
-        float((left + right) / 2)
-        for left, right in zip(unique[:-1], unique[1:], strict=True)
-    )
-    return max(
-        candidates,
-        key=lambda threshold: (
-            balanced_accuracy(
-                labels,
-                probabilities >= threshold,
-                weights,
-            ),
-            -abs(threshold - 0.5),
-            -threshold,
-        ),
-    )
+def _labels(rows: list[dict]) -> list[bool]:
+    return [bool(row[LABEL_COLUMN]) for row in rows]
+
+
+def _weights(rows: list[dict]) -> list[float]:
+    return [float(row[WEIGHT_COLUMN]) for row in rows]
 
 
 def run_task_a(splits: Splits, *, seed: int) -> list[ModelResult]:
@@ -59,7 +49,7 @@ def run_task_a(splits: Splits, *, seed: int) -> list[ModelResult]:
     if not validation_rows:
         raise ValueError("Task A requires validation rows for threshold selection")
 
-    baseline_started = perf_counter()
+    # not trained, so it has no times
     baseline = majority_baseline(
         splits,
         model_id="task_a_weighted_majority",
@@ -67,42 +57,43 @@ def run_task_a(splits: Splits, *, seed: int) -> list[ModelResult]:
         label_column=LABEL_COLUMN,
         weight_column=WEIGHT_COLUMN,
     )
-    baseline.train_seconds = 0.0
-    baseline.predict_seconds = perf_counter() - baseline_started
 
-    train_started = perf_counter()
-    train_features = _features(train_rows)
-    train_labels = np.asarray([row[LABEL_COLUMN] for row in train_rows], dtype=bool)
-    train_weights = np.asarray([row[WEIGHT_COLUMN] for row in train_rows], dtype=np.float64)
+    # model inputs are built before any timing starts
+    x = {split: _features(splits[split]) for split in ("train", "validation", "test")}
+    y_train, w_train = _labels(train_rows), _weights(train_rows)
     model = LogisticRegression(random_state=seed, max_iter=1000)
-    model.fit(train_features, train_labels, sample_weight=train_weights)
-    train_seconds = perf_counter() - train_started
 
-    predict_started = perf_counter()
-    validation_features = _features(validation_rows)
-    validation_probabilities = model.predict_proba(validation_features)[:, 1]
-    validation_labels = [bool(row[LABEL_COLUMN]) for row in validation_rows]
-    validation_weights = [float(row[WEIGHT_COLUMN]) for row in validation_rows]
-    threshold = _select_threshold(
-        validation_labels, validation_probabilities, validation_weights
+    started = perf_counter()
+    model.fit(x["train"], y_train, sample_weight=w_train)
+    train_seconds = perf_counter() - started
+    error = list(model.classes_).index(True)  # the probability column for a logical error
+
+    # the team's threshold rule, called with validation rows only (not timed)
+    validation_probabilities = model.predict_proba(x["validation"])[:, error]
+    threshold = choose_threshold(
+        _labels(validation_rows), validation_probabilities.tolist(), _weights(validation_rows)
     )
 
+    started = perf_counter()
+    test_probabilities = model.predict_proba(x["test"])[:, error]
+    predict_seconds = perf_counter() - started
+
     predictions = []
-    for split in ("validation", "test"):
-        rows = splits[split]
-        probabilities = model.predict_proba(_features(rows))[:, 1]
+    for split, probabilities in (
+        ("validation", validation_probabilities),
+        ("test", test_probabilities),
+    ):
         predictions.extend(
             prediction_rows(
-                rows,
+                splits[split],
                 split=split,
                 model_id="task_a_logistic_regression",
                 label_column=LABEL_COLUMN,
-                predictions=probabilities >= threshold,
-                probabilities=probabilities,
+                predictions=(probabilities >= threshold).tolist(),
+                probabilities=probabilities.tolist(),
                 weight_column=WEIGHT_COLUMN,
             )
         )
-    predict_seconds = perf_counter() - predict_started
 
     linear_model = ModelResult(
         model_id="task_a_logistic_regression",
