@@ -80,6 +80,14 @@ design report.
   measured -- worth a quick real check against the one distance-5
   experiment before finalizing, though it's unlikely to change the
   conclusion given the 20x margin.
+- **Measured (full release, all 5 experiments; resolves the caveat):**
+  `sql/detector_storage_size.sql` builds the per-event design in
+  a temp table. 10,446,925 fired detectors (distance 5 measured directly: 95.6
+  per shot), 1,613 MB including its primary key, against 8.8 MB for the packed
+  detector_bits. The row estimate was close; the size estimate was low because
+  it left out row overhead and the index. Decision unchanged. We also added a
+  1,400-row per-position summary (264 kB), so detector summaries can be
+  queried without an event table. Details in `gold-google.md` (this folder).
 
 
 ### qasmbench
@@ -164,6 +172,18 @@ shape directly) vs. a normalized decoder/decoder_prediction pair (more
 "relational," easier to add a 5th decoder later, but requires a join to
 rebuild the ML table). Leaning wide, since predictions are fixed at
 exactly 4 and the ML export needs them as columns anyway.
+
+**Update (Google Gold implementation):** went with the normalized pair, as
+`decoder` and `shot_prediction`. With wide columns the Google tables would be
+close to a copy of Silver (what the rubric's 4-6 band describes); as rows, Q2
+is a single GROUP BY and the decoder is an entity with a foreign key. Cost:
+241 MB instead of about 1 MB, and a pivot in the ML export. Implemented names
+differ from this draft: `hardware_experiment`, `shot`, `shot_prediction`,
+plus `detector_position_summary` and the view `decoder_outcome`.
+**Still open:** one `experiment` table for both sources (this draft) or
+separate tables for simulated and hardware experiments (the Google
+implementation). To agree with whoever does the syndrome Gold part. See
+`gold-google.md` (this folder).
 
 
 

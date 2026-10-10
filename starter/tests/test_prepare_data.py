@@ -129,3 +129,127 @@ def test_prepare_qasmbench_raises_on_missing_transpiled_variant(monkeypatch) -> 
         raise AssertionError("expected RuntimeError for missing companion file")
     except RuntimeError as error:
         assert "demo_transpiled.qasm" in str(error)
+
+
+# --- Google: shot alignment and tracing -------------------------------------
+
+_GOOGLE_PROPERTIES = """
+basis: X
+distance: 3
+rounds: 1
+shots: 2
+center_data_qubit_row: 0
+center_data_qubit_col: 0
+circuit_measurements: 1
+circuit_detectors: 1
+circuit_sweep_bits: 1
+"""
+
+
+def _google_archive(overrides: dict[str, bytes] | None = None) -> bytes:
+    """One 2-shot experiment with 1-bit records, so every b8 record is one byte."""
+    two_lines = b"0\n1\n"
+    members = {
+        "properties.yml": _GOOGLE_PROPERTIES.encode(),
+        "measurements.b8": b"\x00\x01",
+        "sweep.b8": b"\x00\x01",
+        "detection_events.b8": b"\x00\x01",
+        "obs_flips_actual.01": two_lines,
+        **{name: two_lines for name in prepare_data.GOOGLE_PREDICTION_FILES.values()},
+        **(overrides or {}),
+    }
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w") as bundle:
+        for name, content in members.items():
+            bundle.writestr(f"exp0/{name}", content)
+    return buffer.getvalue()
+
+
+def test_prepare_google_qec_accepts_aligned_companion_files(monkeypatch) -> None:
+    data = _google_archive()
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    experiments, shots, _, issues = prepare_data.prepare_google_qec(
+        client=object(), bucket="bucket", run_id="run-1"
+    )
+
+    assert len(experiments) == 1
+    assert [shot["shot_index"] for shot in shots] == [0, 1]
+    assert not issues
+
+
+def test_prepare_google_qec_stops_on_short_prediction_file(monkeypatch) -> None:
+    # properties.yml declares 2 shots, but this prediction file has only 1
+    data = _google_archive({"obs_flips_predicted_by_pymatching.01": b"0\n"})
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    try:
+        prepare_data.prepare_google_qec(client=object(), bucket="bucket", run_id="run-1")
+        raise AssertionError("expected RuntimeError for a misaligned companion file")
+    except RuntimeError as error:
+        assert "obs_flips_predicted_by_pymatching.01" in str(error)
+        assert "expected 2" in str(error)
+
+
+def test_every_google_silver_row_is_traced(monkeypatch) -> None:
+    data = _google_archive()
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    experiments, shots, traces, _ = prepare_data.prepare_google_qec(
+        client=object(), bucket="bucket", run_id="run-1"
+    )
+
+    traced: dict[str, set[str]] = {}
+    for trace in traces:
+        traced.setdefault(trace["source_record_id"], set()).add(trace["archive_member"])
+    assert traced[experiments[0]["source_record_id"]] == {"exp0/properties.yml"}
+    for shot in shots:
+        # a shot is assembled from all eight aligned files, so all eight are traced
+        assert traced[shot["source_record_id"]] == {
+            f"exp0/{member}" for member in prepare_data.GOOGLE_SHOT_MEMBERS
+        }
+
+
+# --- QASMBench: tracing ---------------------------------------------------------
+
+# The real small/qec_sm_n5 circuit from the release.
+_QEC_SM_N5 = """// Repetition code syndrome measurement
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[3];
+qreg a[2];
+creg c[3];
+creg syn[2];
+gate syndrome d1,d2,d3,a1,a2
+{
+  cx d1,a1; cx d2,a1;
+  cx d2,a2; cx d3,a2;
+}
+x q[0]; // error
+barrier q;
+syndrome q[0],q[1],q[2],a[0],a[1];
+measure a -> syn;
+if(syn==1) x q[0];
+if(syn==2) x q[2];
+if(syn==3) x q[1];
+measure q -> c;
+"""
+
+
+def test_every_qasmbench_silver_row_is_traced(monkeypatch) -> None:
+    data = _zip_bytes(
+        {
+            "small/qec_sm_n5/qec_sm_n5.qasm": _QEC_SM_N5,
+            "small/qec_sm_n5/qec_sm_n5_transpiled.qasm": _QEC_SM_N5,
+        }
+    )
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    circuits, checks, corrections, traces, _ = prepare_data.prepare_qasmbench(
+        client=object(), bucket="bucket", run_id="run-1"
+    )
+
+    assert (len(circuits), len(checks), len(corrections)) == (2, 4, 6)
+    traced_ids = {trace["source_record_id"] for trace in traces}
+    for row in [*circuits, *checks, *corrections]:
+        assert row["source_record_id"] in traced_ids

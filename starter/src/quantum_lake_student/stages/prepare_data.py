@@ -46,6 +46,7 @@ from quantum_lake_student.io_utils import (
     write_local_parquet,
     write_parquet,
 )
+from quantum_lake_student.ml import google_data_split, syndrome_data_split
 from quantum_lake_student.models import QualityFinding, Severity, StageResult, stable_record_hash
 from quantum_lake_student.stages.register_sources import MANIFEST_PATH
 from quantum_lake_student.tracing import (
@@ -1026,9 +1027,14 @@ def run(run_id: str) -> StageResult:
     }
     (results_dir / "row_counts.json").write_text(json.dumps(row_counts_json, indent=2))
 
+    # Part II only predicts validation and test rows, so the examples are test
+    # rows: the trace can then continue to a real prediction.
     syndrome_example = None
-    if syndrome_records:
-        example = syndrome_records[0]
+    example = next(
+        (r for r in syndrome_records if syndrome_data_split(r["physical_fault_rate"]) == "test"),
+        None,
+    )
+    if example is not None:
         syndrome_example = {
             "source_record_id": example["source_record_id"],
             "silver_row": {**example, "syndrome_bits": example["syndrome_bits"].hex()},
@@ -1039,8 +1045,8 @@ def run(run_id: str) -> StageResult:
         }
 
     google_example = None
-    if shot_records:
-        example = shot_records[0]
+    example = next((s for s in shot_records if google_data_split(s["shot_index"]) == "test"), None)
+    if example is not None:
         google_example = {
             "source_record_id": example["source_record_id"],
             "silver_row": {
