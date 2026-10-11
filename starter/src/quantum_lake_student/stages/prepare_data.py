@@ -245,11 +245,10 @@ def prepare_qec_syndromes(
     schema_note_logged = False
 
     with zipfile.ZipFile(io.BytesIO(data)) as bundle:
-        csv_members = sorted(
-            member.filename
-            for member in bundle.infolist()
-            if member.filename.endswith(".csv") and check_safe_archive_member(member.filename)
-        )
+        unsafe = [name for name in bundle.namelist() if not check_safe_archive_member(name)]
+        if unsafe:
+            raise RuntimeError(f"unsafe archive member(s) in qec_syndromes: {unsafe}")
+        csv_members = sorted(name for name in bundle.namelist() if name.endswith(".csv"))
         for member_name in csv_members:
             experiment_id = f"qec_syndromes/{Path(member_name).stem}"
             try:
