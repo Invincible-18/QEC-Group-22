@@ -253,3 +253,47 @@ def test_every_qasmbench_silver_row_is_traced(monkeypatch) -> None:
     traced_ids = {trace["source_record_id"] for trace in traces}
     for row in [*circuits, *checks, *corrections]:
         assert row["source_record_id"] in traced_ids
+
+
+# --- QASMBench: spacing before the semicolon -------------------------------------
+
+_TIGHT_QASM = """OPENQASM 2.0;
+qreg q[3];
+qreg a[2];
+creg c[3];
+creg syn[2];
+cx q[0],a[0];
+cx q[1],a[0];
+cx q[1],a[1];
+cx q[2],a[1];
+measure a[0] -> syn[0];
+measure a[1] -> syn[1];
+if(syn==1) x q[0];
+measure q[0] -> c[0];
+"""
+
+# The same circuit with a space before every semicolon, as in line 98 of
+# error_correctiond3_n5.qasm (`cx q[1],q[2] ;`).
+_SPACED_QASM = _TIGHT_QASM.replace(";", " ;").replace("OPENQASM 2.0 ;", "OPENQASM 2.0;")
+
+
+def _qasm_results(content: str):
+    statements = prepare_data.parse_qasm_lines(content)
+    metrics = prepare_data.extract_circuit_metrics(statements)
+    checks, corrections, _, issues = prepare_data.parse_parity_and_corrections(
+        statements, "demo", "small/demo/demo.qasm", "bronze/demo.zip", "sha", "run-1"
+    )
+    return metrics, checks, corrections, issues
+
+
+def test_qasm_statements_with_a_space_before_the_semicolon_are_parsed_the_same() -> None:
+    tight = _qasm_results(_TIGHT_QASM)
+    spaced = _qasm_results(_SPACED_QASM)
+
+    qregs, cregs, measurements, two_qubit_gates = spaced[0]
+    assert qregs == {"q": 3, "a": 2} and cregs == {"c": 3, "syn": 2}
+    assert two_qubit_gates == 4  # the CNOTs written as `cx q[1],a[1] ;` are counted
+    assert spaced[0] == tight[0]
+    assert [c["data_qubits"] for c in spaced[1]] == [c["data_qubits"] for c in tight[1]]
+    assert len(spaced[1]) == 2 and len(spaced[2]) == 1
+    assert len(spaced[3]) == len(tight[3]) == 1  # the final readout is filtered, not lost
