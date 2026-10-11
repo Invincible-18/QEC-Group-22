@@ -1,230 +1,277 @@
 # Decision log — QEC data pipeline
 
-Plain-language record of discovery findings and design decisions, in the
-order they came up. Update this as work continues; it feeds the final
-design report.
+Plain-language record of what we found in the data and what we decided, with
+the evidence. It feeds the Part I design report (`docs/part1-design-report.md`) and the Part II
+report (`docs/part2-report/`).
 
+## Design summary
+
+- **Layers:** Bronze keeps the three course archives unchanged in MinIO; Silver
+  is cleaned Parquet in MinIO (the six required tables); Gold is relational, in
+  PostgreSQL; the two ML tables are exported from Gold; run records, issues and
+  analyses go to local `results/`.
+- **One command per part:** `make run-part1` and `make train-part2`; both record
+  the code revision, data release, counts and timings in `run.json`.
+- **Nothing is trusted before it is checked:** every Bronze archive is checked
+  against the release manifest (size and SHA-256), and an unsafe archive member
+  or a missing companion file stops the run for every source.
+- **Stable identifiers:** `source_record_id`, `example_id` and `issue_id` are
+  hashes of where a record comes from and what it is, never of row order in
+  Silver or of the run, so a rerun produces the same identifiers.
+- **Keep, do not drop:** an invalid row is never silently removed; it goes to
+  `data_issues.parquet` with its value, rule, action and reason.
+- **Aggregates stay aggregates:** syndrome rows keep `quantity` as a weight and
+  are never expanded into single shots.
+- **All-or-nothing Gold:** Gold is rebuilt in one transaction; if any load or
+  check fails, the previous Gold stays as it was.
+- **No invented links:** the three sources share vocabulary (experiment,
+  syndrome, decoder, check) but no cross-source keys; the QASMBench-to-shot-data
+  relationship was examined and rejected.
+- **Storage from measurement:** Google shots are stored packed, one row per
+  shot, because a row per fired detector measured about 180 times larger.
+- **Repeatable by proof:** `make rerun-check-part1` runs Part I twice and
+  compares 25 outputs; a clean-environment run reproduced all results.
+- **Part II as a consumer:** a shared framework reads only the two ML tables,
+  hands each task its supplied split, and alone computes metrics and writes
+  files, so all models are evaluated the same way.
+
+
+## 1. Discovery
+
+Before writing any pipeline code we explored each archive in notebooks,
+without changing or extracting it: archive members and sizes, actual headers
+and types, row and shot counts, candidate keys and their collisions, declared
+and stored bit widths and padding, and file alignment. The findings below come
+from that work. Every check was then rebuilt as tested code in
+`prepare_data.py`, so the pipeline repeats it on every run; the notebooks were
+exploration only and are not part of the submission.
 
 ### qec_syndromes
-- 7 CSV files + README.txt in `syndromes_dataset.zip` (358,017 bytes total)
+- 7 CSV files + README.txt in `syndromes_dataset.zip` (358,017 bytes total).
 - Columns (actual header): `labels` (int, 0/1), `syndromes` (string,
-  nested-tuple literal), `quantity` (int, positive)
-- Row counts vary by fault rate: 68 rows at pfr=0.00001, 49,676 rows at
-  pfr=0.01 (more noise -> more distinct syndrome/label combinations)
-- `quantity` sums to exactly 10,000,000 in both files checked
-- Candidate IDs: `experiment_id` = one per CSV file (fault-rate
-  experiment); business key = (experiment_id, syndrome_bits, label);
-  syndrome alone is NOT a valid key (18,210 collisions at pfr=0.01)
-- `source_record_id` candidate: hash of (bronze_object, archive_member,
-  CSV row position)
+  nested-tuple literal), `quantity` (int, positive). The documentation calls
+  the label column `label`; the difference is recorded as a documented issue.
+- Each CSV row is one aggregate observation: one syndrome and label, with
+  `quantity` the number of simulated shots that produced it. Every syndrome is
+  four rounds of four binary checks.
+- Row counts grow with the fault rate: 68 rows at pfr=0.00001, 49,676 rows at
+  pfr=0.01 (more noise gives more distinct syndrome/label combinations).
+- `quantity` sums to exactly 10,000,000 per file; this is checked for every file.
+- Keys: one experiment per CSV file (fault-rate experiment); business key =
+  (experiment, syndrome, label). A syndrome alone is NOT a valid key (18,210
+  collisions at pfr=0.01).
 
 ### google_qec
 - 5 experiment directories in `google-surface-code-curated.zip`
-  (14,638,673 bytes total): 4x distance-3 (`center_3_5`, `center_5_3`,
-  `center_5_7`, `center_7_5`), 1x distance-5 (`center_5_5`)
-- Each dir: properties.yml, measurements.b8, sweep.b8,
-  detection_events.b8, obs_flips_actual.01, 4x
-  obs_flips_predicted_by_*.01, circuit_ideal.stim, circuit_noisy.stim,
-  circuit_detector_error_model.dem, layout.svg, 2x extra pij_*.dem
-  (undocumented, not required for Silver)
-- All basis=X, rounds=25, shots=50,000 per experiment -> 250,000 shots
-  total
-- Bit widths (declared vs stored-with-padding): measurements 209->216
-  bits (7 padding), sweep 9->16 bits (7 padding, d3) / d5 sweep=32 bits
-  declared, detectors 200 bits/d3 and 600 bits/d5 (0 padding, byte-aligned
-  already)
-- All 5 experiments x all companion files verified byte/line-count
-  aligned to declared shots
-- Candidate IDs: `experiment_id` = directory name (or a cleaner
-  parsed form: basis/distance/rounds/center_row/center_col);
-  `shot_index` = zero-based line/record position within an experiment's
-  aligned files
-- `source_record_id` candidate: one shot's aligned bytes span multiple
-  Bronze members (measurements.b8 + sweep.b8 + detection_events.b8 +
-  5x .01 files), so `source_trace.parquet` needs multiple rows per
-  `source_record_id` for a single shot, per silver-tables.md's own note
-  ## google_qec (additional)
-
-- **Finding:** padding-zero check passes for all sampled shots (measurement
-  and sweep records both have genuinely zero unused high bits, not just
-  assumed).
-- **Finding:** over 2,000 shots of experiment `center_3_5`, actual-flip
-  class balance is ~49/51 (near coin-flip); majority baseline gets 51.1%
-  agreement; all four decoders beat that baseline but only reach 55-60%.
-  Decoders agree with each other more (60-74%, varying by pair) than with
-  `actual` -- differentiated pairwise agreement rules out a shared
-  indexing bug and instead shows the four decoders make genuinely
-  different mistakes on this hard, near-threshold dataset. Useful
-  evidence for Part II Task B (combined-decoder motivation).
-## google_qec: detector storage design decision
-
-- **Question:** should Gold store one row per shot (packed bytes + event
-  count summary) or one row per individual fired detector event?
-- **Evidence:** average detector_event_count per shot, measured over a
-  2,000-shot real sample of distance-3 data, is 31.08 (out of 200
-  detector bits). Extrapolating to the full release (250,000 shots across
-  5 experiments, distance 3 and 5 combined):
-  - shot-summary design: ~32.5 MB estimated total size
-  - per-fired-event design: ~10.9 million rows, ~653 MB estimated total
-    size (~20x larger)
-- **Decision:** use the shot-summary design (one Gold row per shot, with
-  packed measurement/sweep/detector bytes plus detector_event_count) for
-  google_shot. The ml_google_decoder_example export needs exactly this
-  shape (packed detector_bits + detector_event_count), so a per-event
-  table would add ~20x storage cost for data the required ML export
-  never queries at that granularity. A per-event table remains available
-  as an optional addition later if a specific analysis needs it, but is
-  not required for the minimum Gold model.
-- **Caveat:** the distance-5 event-rate figure is extrapolated (scaled by
-  detector-width ratio) from the distance-3 sample, not independently
-  measured -- worth a quick real check against the one distance-5
-  experiment before finalizing, though it's unlikely to change the
-  conclusion given the 20x margin.
-- **Measured (full release, all 5 experiments; resolves the caveat):**
-  `sql/detector_storage_size.sql` builds the per-event design in
-  a temp table. 10,446,925 fired detectors (distance 5 measured directly: 95.6
-  per shot), 1,613 MB including its primary key, against 8.8 MB for the packed
-  detector_bits. The row estimate was close; the size estimate was low because
-  it left out row overhead and the index. Decision unchanged. We also added a
-  1,400-row per-position summary (264 kB), so detector summaries can be
-  queried without an event table. Details in `gold-google.md` (this folder).
-
+  (14,638,673 bytes total): 4x distance 3 (`center_3_5`, `center_5_3`,
+  `center_5_7`, `center_7_5`), 1x distance 5 (`center_5_5`).
+- Each directory: properties.yml, measurements.b8, sweep.b8,
+  detection_events.b8, obs_flips_actual.01, 4x obs_flips_predicted_by_*.01,
+  circuit_ideal.stim, circuit_noisy.stim, circuit_detector_error_model.dem,
+  layout.svg, and 2 extra pij_*.dem files (undocumented, not used).
+- All basis X, 25 rounds, 50,000 shots per experiment -> 250,000 shots.
+- Bit widths (declared vs stored with padding), distance 3: measurements
+  209 -> 216 bits, sweep 9 -> 16 bits; detectors 200 bits (distance 3) and 600
+  bits (distance 5), byte-aligned. Distance-5 sweep is 25 bits (stored in 32);
+  the first parser hard-coded the distance-3 width of 9, a bug caught and fixed
+  before running on all data.
+- Padding bits are really zero (checked, not assumed), and all companion files
+  of all 5 experiments align to the declared shot count.
+- One shot spans 8 Bronze members (3 .b8 files and 5 .01 files), so
+  `source_trace.parquet` has several rows per shot.
+- Early finding: on 2,000 shots of `center_3_5` the actual flip is close to a
+  coin flip (about 49/51); all four decoders beat the majority baseline but only
+  reach 55-60%, and they agree with each other (60-74% by pair) more than with
+  the actual flip. They make different mistakes, which motivates Part II Task B.
 
 ### qasmbench
-- 3 benchmark dirs in `qasmbench-qec.zip` (144,172 bytes total):
-  `qec_sm_n5`, `qec_en_n5`, `error_correctiond3_n5`; each with README,
-  2 PNGs, source .qasm, transpiled .qasm; plus top-level LICENSE, NOTICE,
-  README, qelib1.inc
-- Only `qec_sm_n5` has explicit ancilla register + custom check gate +
-  if-conditioned corrections (2 stabilizer checks, 3 corrections). The
-  other two have no ancilla register and no conditional statements at
-  all -> 0 stabilizer_check/conditional_correction rows for those, by
-  design, not by omission
-- `qec_sm_n5`: qubit_count=5 (3 data + 2 ancilla), 2 checks, 3
-  corrections; transpiled variant preserves the same check/correction
-  content with inlined gates and split/reordered measurement statements
-- Candidate IDs: `circuit_id` = (benchmark_name, variant) pair, e.g.
-  `qec_sm_n5/source` vs `qec_sm_n5/transpiled`
-- `source_record_id` candidate: hash of (bronze_object, archive_member,
-  QASM statement position) for circuit-level rows; per-check and
-  per-correction rows need their own locator (e.g. statement index of the
-  defining gate call / if-statement)
+- 3 benchmark directories in `qasmbench-qec.zip` (144,172 bytes total):
+  `qec_sm_n5`, `qec_en_n5`, `error_correctiond3_n5`, each with a README, 2 PNGs,
+  a source .qasm and a transpiled .qasm; plus LICENSE, NOTICE, README and
+  qelib1.inc at the top.
+- Only `qec_sm_n5` has an ancilla register, a custom check gate and `if`
+  corrections (5 qubits: 3 data + 2 ancilla; 2 checks). The other two have no
+  ancilla register and no conditional statements, so they have no
+  stabilizer-check or correction rows, by design, not by omission.
+- The transpiled variant keeps the same checks and corrections, with gates
+  inlined and measurements split and reordered.
+- One circuit writes a statement with a space before the semicolon
+  (`cx q[1],q[2] ;` in `error_correctiond3_n5.qasm`); the first parser missed
+  that CNOT (48 instead of 49 two-qubit gates). All statement patterns now allow
+  the space, with a test.
 
+
+## 2. Identifiers
+
+- **`source_record_id`** is a SHA-256 hash of the record's place in Bronze:
+  - syndrome row: Bronze object, archive member and CSV row number;
+  - Google experiment: Bronze object and its `properties.yml`; Google shot:
+    Bronze object, experiment and shot index;
+  - QASMBench rows: Bronze object, archive member and statement position.
+- **`example_id`** (ML tables) is a hash of the business key, built in Gold
+  (the `syndrome_example` view; a column of `shot`): experiment, syndrome and
+  label for syndromes; source, experiment and shot for Google. It resolves to
+  exactly one Gold record.
+- **`issue_id`** is a hash of the rule, source system, record locator, record id
+  and observed value. It first included the run id and so changed on every run,
+  and collided across locations; both were fixed.
+- **Cost:** hashes are not human-readable, so `source_trace.parquet` and the
+  trace examples carry the readable locators next to them.
+
+
+## 3. Bronze and run safety
+
+- Bronze objects are checked against the release manifest (`objects[].sha256`
+  and size) at the start of every run; a mismatch stops the run.
+- `check_safe_archive_member` rejects absolute paths, drive-letter paths and
+  `..`; `check_required_members` checks each source's required files. Both are
+  source-agnostic (in `io_utils.py`) and were verified against all 103 real
+  archive members (no false positives) and against deliberately bad examples.
+  All three sources stop the run on an unsafe member (the syndrome reader first
+  skipped such a member silently; changed so all sources behave the same).
+- No missing companion files in the real release (5 Google experiments,
+  3 QASMBench benchmarks).
+- The course dataset bundle is not tracked in git: it is supplied separately,
+  and `make bootstrap` seeds it into Bronze.
+
+
+## 4. Silver
+
+- The three sources stay in separate Silver tables; no cross-source join is
+  justified at this layer.
+- Syndrome `quantity` is kept as a weight and never expanded into repeated rows
+  (70 million represented shots stay 75,598 rows).
+- Syndromes are stored as 16 explicit 0/1 bytes, round by round.
+- Google bits stay packed (Stim b8, little-endian inside each byte) with their
+  declared widths; padding is checked and discarded on unpacking.
+
+
+## 5. Gold
+
+Final tables (schema `gold`), one sentence each:
+
+| table | one row is |
+| --- | --- |
+| `syndrome_experiment` | one simulated experiment at one physical fault rate |
+| `syndrome_pattern` | one distinct 16-value syndrome (31,941 patterns) |
+| `syndrome_observation` | one aggregate CSV observation: experiment, pattern, label and `quantity` |
+| `hardware_experiment` | one Google experiment directory and its settings |
+| `shot` | one hardware shot: packed measurement, sweep and detector bits, event count, actual flip |
+| `decoder` | one supplied decoding algorithm |
+| `shot_prediction` | one decoder's prediction for one shot |
+| `detector_position_summary` | one detector position in one experiment, with how often it fired |
+| `circuit` | one QASMBench circuit variant (benchmark x source/transpiled) |
+| `stabilizer_check` | one parity check in one circuit: ancilla, data qubits, syndrome bit |
+| `conditional_correction` | one syndrome-conditioned recovery operation in one circuit |
+
+Views: `syndrome_example` and `decoder_outcome` (used by the ML export and Q2).
+
+- **Separate experiment tables:** simulated and hardware experiments have
+  different attributes (a fault rate against basis, distance, rounds and chip
+  position), so they are two tables rather than one table with a source column
+  and mostly empty fields. (The early draft had one shared `experiment` table.)
+- **Syndrome patterns as their own table:** the same pattern occurs in several
+  experiments; storing it once lets Q1 compare patterns across fault rates with
+  a join instead of comparing byte strings.
+- **Decoder predictions as rows:** first leaning towards four wide columns on
+  `shot` (the shape of the ML table). Chose the normalized pair `decoder` and
+  `shot_prediction`: with wide columns the Google tables would be close to a copy
+  of Silver, and as rows Q2 is a single GROUP BY with the decoder as an entity
+  with a foreign key. Cost: 241 MB instead of about 1 MB, and a pivot in the ML
+  export.
+- **Detector storage, one row per shot:** per-event storage was estimated from a
+  2,000-shot sample (31.08 events per distance-3 shot) and then measured on the
+  full release with `sql/detector_storage_size.sql`: 10,446,925 fired detectors
+  (95.6 per distance-5 shot), 1,613 MB with its primary key, against 8.8 MB for
+  the packed `detector_bits`. Kept one row per shot; the ML table needs exactly
+  the packed bits and the event count. The 1,400-row `detector_position_summary`
+  (264 kB) makes per-detector questions answerable without an event table.
+- **Keys and checks:** every table has a primary key; foreign keys link
+  observations to experiments and patterns, shots to experiments, predictions to
+  shots and decoders, and checks and corrections to circuits; CHECK constraints
+  cover value ranges (fault rate, positive quantity, 16-byte syndromes).
+- **All-or-nothing load:** `rebuild_gold` drops and recreates the schema, loads
+  and validates every source in one transaction; any failure rolls everything
+  back. Validation compares Gold row counts with Silver for every table.
 
 
 ## Rejected relationships
 
 - **Candidate:** join QASMBench circuits (qec_sm_n5, qec_en_n5,
   error_correctiond3_n5) to the Google hardware experiments and/or the
-  simulated syndrome experiments, on the theory that a circuit file
-  documents the same code the shot data was produced from.
+  simulated syndrome experiments, on the theory that a circuit file documents
+  the same code the shot data was produced from.
 - **Evidence against:**
-  - No shared identifier exists in any source. QASMBench files carry only
-    a benchmark name and source/transpiled variant; Google experiments are
-    keyed by basis/distance/rounds/center-coordinates
-    (`properties.yml`); syndrome files are keyed by physical fault rate
-    encoded in the filename. None of these vocabularies overlap.
-  - Structural mismatch: `qec_sm_n5` is a 3-data-qubit / 2-ancilla
-    repetition code (2 stabilizer checks). The Google/syndrome data is a
-    distance-3 or distance-5 **surface** code -- 9 data qubits and 8
-    stabilizer checks per the primer's figure, for distance 3. Qubit and
-    check counts don't match, so even a "same code, different
-    representation" join isn't defensible.
+  - No shared identifier exists in any source. QASMBench files carry only a
+    benchmark name and source/transpiled variant; Google experiments are keyed
+    by basis/distance/rounds/center coordinates (`properties.yml`); syndrome
+    files are keyed by physical fault rate in the filename. None of these
+    vocabularies overlap.
+  - Structural mismatch: `qec_sm_n5` is a 3-data-qubit / 2-ancilla repetition
+    code (2 stabilizer checks). The Google/syndrome data is a distance-3 or
+    distance-5 **surface** code -- 9 data qubits and 8 stabilizer checks for
+    distance 3. Qubit and check counts don't match, so even a "same code,
+    different representation" join isn't defensible.
   - `qec_en_n5` and `error_correctiond3_n5` have no ancilla register, no
-    syndrome-conditioned correction, and no per-shot data at all -- they
-    are single static circuits, not repeatable experiments with shots, so
-    there is no shot-level key on the QASMBench side to join through even
-    in principle.
+    syndrome-conditioned correction and no per-shot data -- single static
+    circuits, not repeatable experiments, so there is no shot-level key to join
+    through even in principle.
 - **Decision:** QASMBench circuits are stored in Gold as independent
-  circuit/stabilizer_check/conditional_correction entities, joined to
-  nothing else. They document QEC circuit semantics (how ancillas extract
-  syndromes, how corrections are applied) as reference material, not as
-  joinable experiment records. No cross-source foreign key is created.
+  circuit/stabilizer_check/conditional_correction entities, joined to nothing
+  else. They document QEC circuit semantics (how ancillas extract syndromes,
+  how corrections are applied) as reference material. No cross-source foreign
+  key is created.
 
 
-## Gold row-meaning sentences (step 6, draft)
+## 6. ML export and tracing
 
-- `experiment`: one row is one distinct QEC run configuration that
-  produced shots or aggregate observations -- either one simulated
-  physical-fault-rate file or one Google hardware experiment directory
-  (a source-discriminator column distinguishes the two).
-- `syndrome_observation`: one row is one distinct (experiment, 16-bit
-  syndrome, logical-error label) combination from the simulated data,
-  carrying its physical shot-count weight.
-- `google_shot`: one row is one single hardware shot within one Google
-  experiment -- its packed measurement/sweep/detector bits, actual flip,
-  and four decoder predictions.
-- `decoder`: one row is one named decoding algorithm (belief_matching,
-  correlated_matching, pymatching, tensor_network_contraction).
-- `decoder_prediction`: one row is one decoder's prediction for one
-  Google shot (alternative to wide columns on google_shot -- open
-  design choice, see below).
-- `circuit`: one row is one parsed QASMBench circuit variant
-  (benchmark x source/transpiled).
-- `stabilizer_check`: one row is one parity check identified in one
-  circuit, linking an ancilla qubit to its data qubits and syndrome bit.
-- `conditional_correction`: one row is one syndrome-conditioned recovery
-  operation identified in one circuit.
-
-Open design question: keep the 4 decoder predictions as wide boolean
-columns on google_shot (matches the ml_google_decoder_example contract
-shape directly) vs. a normalized decoder/decoder_prediction pair (more
-"relational," easier to add a 5th decoder later, but requires a join to
-rebuild the ML table). Leaning wide, since predictions are fixed at
-exactly 4 and the ML export needs them as columns anyway.
-
-**Update (Google Gold implementation):** went with the normalized pair, as
-`decoder` and `shot_prediction`. With wide columns the Google tables would be
-close to a copy of Silver (what the rubric's 4-6 band describes); as rows, Q2
-is a single GROUP BY and the decoder is an entity with a foreign key. Cost:
-241 MB instead of about 1 MB, and a pivot in the ML export. Implemented names
-differ from this draft: `hardware_experiment`, `shot`, `shot_prediction`,
-plus `detector_position_summary` and the view `decoder_outcome`.
-**Still open:** one `experiment` table for both sources (this draft) or
-separate tables for simulated and hardware experiments (the Google
-implementation). To agree with whoever does the syndrome Gold part. See
-`gold-google.md` (this folder).
+- Both ML tables are built only from Gold, with the committed SQL in `sql/`
+  (`ml_*.sql`) and the Gold views; nothing re-reads Bronze or Silver. Their
+  schemas are checked against the contracts before writing.
+- The supplied splits are stored in `data_split` exactly as the course helpers
+  compute them.
+- The two examples in `trace_examples.json` are test rows, so each trace can
+  continue to a real Part II prediction (`results/part2/trace_predictions.json`).
+  The first version used the first Silver rows, which were training rows and
+  are never predicted.
 
 
+## 7. results/ storage
 
-## Infrastructure decision: results/ storage backend
+- **Ambiguity:** no assignment doc states whether `results/` (data_issues.parquet,
+  run.json, etc.) should be written to MinIO or the local filesystem; brief.md
+  only says it is kept "outside the four data areas."
+- **Evidence:** config.py's `lake_backend` setting governs only Bronze, Silver,
+  Gold and ML; nothing wires `results/` to MinIO, and compose.yaml mounts only
+  the code (`./starter:/workspace`) and the read-only course data.
+- **Decision:** results files are written to local disk under
+  `/workspace/results/` (`starter/results/` on the host), with plain pyarrow
+  (`write_local_parquet`, `read_local_parquet`, `write_data_issues` in
+  `io_utils.py`). Generated results are not committed; the run recreates them.
 
-- **Ambiguity:** no assignment doc explicitly states whether `results/`
-  (data_issues.parquet, run.json, etc.) should be written to MinIO or the
-  local filesystem. brief.md only says it's kept "outside the four data
-  areas."
-- **Evidence used to decide:** config.py's `lake_backend` setting (minio
-  vs local) governs only Bronze/Silver/Gold/ML; no equivalent backend
-  setting or MinIO wiring exists anywhere for `results/`. compose.yaml
-  defines only two volumes for the workspace container -- the code bind
-  mount (`./starter:/workspace`) and the read-only course-data mount --
-  no results-specific storage mechanism at all.
-- **Decision:** results/ files are written to local disk (under
-  /workspace/results/, i.e. starter/results/ on the host via the bind
-  mount), using plain pyarrow.parquet.write_table to a Path, not the
-  MinIO client. Verified: a real write from the notebook produced a real
-  file on the host filesystem outside the container.
-- **io_utils.py additions:** write_local_parquet/read_local_parquet
-  (generic local Parquet I/O) and write_data_issues (now writes locally,
-  matching this decision).
-  - **Correction/confirmation:** distance-5 sweep-bit width is 25 (not 9 --
-  the initial parse_shot hardcoded 9 from the distance-3 case, a real bug
-  caught and fixed before scaling). Measured average
-  detector_event_count for distance-5, from a real 2,000-shot sample, is
-  95.12 -- closely matching the earlier extrapolated estimate of 93.24
-  used in the storage-design decision above. The shot-summary vs.
-  per-event storage conclusion (~20x difference) is confirmed by real
-  data, not just extrapolation.
 
-## Shared infra: required-companion-file and archive-safety checks
+## 8. Part II
 
-- Added `check_safe_archive_member` (rejects absolute paths, drive-letter
-  paths, `..` traversal) and `check_required_members` (checks a
-  source-specific required-filename list against a directory prefix) to
-  io_utils.py, since both are genuinely source-agnostic -- verified
-  against all 103 real archive members across all three sources (0 false
-  positives) and against deliberately unsafe/incomplete examples (all
-  correctly caught).
-- Confirmed no missing companion files across all 5 Google experiments
-  and all 3 QASMBench benchmarks in the real release.
-
+- **One framework, three tasks:** `train.py` loads and checks the two ML tables
+  (schema and SHA-256), splits them with the course helper, and hands each task
+  its rows already split. Tasks only return predictions; the framework checks
+  that every model predicts exactly the validation and test rows with the right
+  labels and weights, computes all metrics on test with one implementation, and
+  writes every file.
+- **Threshold rule:** every model with a probability uses the grid value
+  0.05-0.95 (step 0.01) with the lowest validation logical-error rate (weighted
+  for Task A); ties keep the lowest value. Chosen on validation only.
+- **Timing rule:** `train_seconds` covers only `fit`, `predict_seconds` only the
+  test prediction; building inputs is not timed. Baselines and supplied decoders
+  have no times. The framework rejects results that break this.
+- **Report from templates:** `report.md` is generated from
+  `docs/part2-report/*.md`, with every table filled from the same run's metrics,
+  so the numbers always match `metrics.json`.
+- **Task A:** weighted logistic regression is no better than the weighted
+  majority on test; the threshold is tuned on the low validation fault rate
+  (0.0005) and the fault rate is not an input. Reported as observed.
+- **Task C:** the MLP stops at `max_iter=50` with a ConvergenceWarning on
+  purpose: with 100-400 iterations training accuracy rose but test error did
+  not improve, so longer training only overfits.
+- **Dependencies:** scikit-learn, numpy, scipy and joblib are pinned in
+  `pyproject.toml`; the versions used are also recorded in `run.json`.
