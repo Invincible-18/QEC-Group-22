@@ -35,3 +35,15 @@ def parse_01_records(data: bytes) -> list[int]:
     if any(value not in {b"0", b"1"} for value in lines):
         raise ValueError("01 data contains a value other than 0 or 1")
     return [int(value) for value in lines]
+
+
+def check_padding_zero(record_bytes: bytes, bits_per_record: int) -> bool:
+    """Return whether the unused high bits of a byte-aligned b8 record are zero."""
+    expected_length = b8_record_bytes(bits_per_record)
+    if len(record_bytes) != expected_length:
+        raise ValueError("record_bytes length does not match bits_per_record")
+    used_bits_in_last_byte = bits_per_record % 8
+    if used_bits_in_last_byte == 0:
+        return True
+    mask = (0xFF << used_bits_in_last_byte) & 0xFF
+    return (record_bytes[-1] & mask) == 0
