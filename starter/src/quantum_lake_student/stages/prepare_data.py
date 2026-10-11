@@ -632,11 +632,11 @@ def extract_circuit_metrics(
     two_qubit_count = 0
 
     for _, line in statements:
-        qm = re.match(r"qreg\s+([a-zA-Z0-9_]+)\[(\d+)\];", line)
+        qm = re.match(r"qreg\s+([a-zA-Z0-9_]+)\[(\d+)\]\s*;", line)
         if qm:
             qregs[qm.group(1)] = int(qm.group(2))
             continue
-        cm = re.match(r"creg\s+([a-zA-Z0-9_]+)\[(\d+)\];", line)
+        cm = re.match(r"creg\s+([a-zA-Z0-9_]+)\[(\d+)\]\s*;", line)
         if cm:
             cregs[cm.group(1)] = int(cm.group(2))
             continue
@@ -649,7 +649,7 @@ def extract_circuit_metrics(
             continue
 
         two_qm = re.match(
-            r"(?:cx|cz|cy|ch|swap)\s+([a-zA-Z0-9_]+(?:\[\d+\])?)\s*,\s*([a-zA-Z0-9_]+(?:\[\d+\])?);",
+            r"(?:cx|cz|cy|ch|swap)\s+([a-zA-Z0-9_]+(?:\[\d+\])?)\s*,\s*([a-zA-Z0-9_]+(?:\[\d+\])?)\s*;",
             line,
         )
         if two_qm:
@@ -677,7 +677,7 @@ def parse_parity_and_corrections(
     entanglements: dict[str, list[str]] = {}
 
     cond_re = re.compile(
-        r"if\s*\(\s*([a-zA-Z0-9_]+)\s*==\s*(\d+)\s*\)\s*([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+(?:\[\d+\])?);"
+        r"if\s*\(\s*([a-zA-Z0-9_]+)\s*==\s*(\d+)\s*\)\s*([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+(?:\[\d+\])?)\s*;"
     )
 
     for line_no, line in statements:
@@ -714,7 +714,7 @@ def parse_parity_and_corrections(
             )
             continue
 
-        two_qm = re.match(r"(?:cx|cz)\s+([a-zA-Z0-9_]+\[\d+\])\s*,\s*([a-zA-Z0-9_]+\[\d+\]);", line)
+        two_qm = re.match(r"(?:cx|cz)\s+([a-zA-Z0-9_]+\[\d+\])\s*,\s*([a-zA-Z0-9_]+\[\d+\])\s*;", line)
         if two_qm:
             c_q, t_q = two_qm.group(1), two_qm.group(2)
             entanglements.setdefault(t_q, []).append(c_q)
@@ -723,7 +723,7 @@ def parse_parity_and_corrections(
 
         if line.startswith("measure "):
             mm = re.match(
-                r"measure\s+([a-zA-Z0-9_]+\[\d+\])\s*->\s*([a-zA-Z0-9_]+(?:\[\d+\])?);", line
+                r"measure\s+([a-zA-Z0-9_]+\[\d+\])\s*->\s*([a-zA-Z0-9_]+(?:\[\d+\])?)\s*;", line
             )
             if mm:
                 qubit, syn_target = mm.group(1), mm.group(2)
@@ -769,7 +769,7 @@ def parse_parity_and_corrections(
                     issues.append(data_issue_row(finding, run_id=run_id, action="filtered"))
                 continue
 
-            reg_m = re.match(r"measure\s+([a-zA-Z0-9_]+)\s*->\s*([a-zA-Z0-9_]+);", line)
+            reg_m = re.match(r"measure\s+([a-zA-Z0-9_]+)\s*->\s*([a-zA-Z0-9_]+)\s*;", line)
             if reg_m:
                 qreg_name, creg_name = reg_m.group(1), reg_m.group(2)
                 if "a" in qreg_name or "syn" in creg_name:
