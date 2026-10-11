@@ -98,3 +98,20 @@ used in `starter/results/part2/run.json`.
 - **JupyterLab shows a blank page.** The image was built with tornado 6.5.9,
   which breaks it. `docker/requirements.txt` pins 6.5.8, so rebuild with
   `make build` and then `make up`.
+
+## AI usage
+
+We used generative AI tools (Claude Sonnet, Claude Opus and Gemini Flash) as
+assistants during the project:
+
+- To discuss and check trade-offs in our design, such as evaluating Gold
+  normalization (keeping decoders as separate entities versus wide columns),
+  comparing detector storage approaches, and reviewing candidate keys;
+- To draft initial boilerplate code, unit test outlines (like synthetic data
+  fixtures) and SQL query skeletons;
+- To help diagnose edge cases in source parsing, such as whitespace preceding
+  semicolons in OpenQASM circuits; and
+- To assist with structuring and editing drafts of the design reports.
+
+All final design choices, relational schemas, pipeline transformations, test
+assertions and report conclusions were decided, verified and tested by the team.
