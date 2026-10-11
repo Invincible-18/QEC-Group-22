@@ -1,6 +1,8 @@
 import io
 from zipfile import ZipFile
 
+import pytest
+
 from quantum_lake_student.stages import prepare_data
 
 
@@ -47,6 +49,18 @@ def test_prepare_qec_syndromes_writes_valid_rows_and_issues(monkeypatch) -> None
     assert all(record["source_record_id"] for record in records)
     assert len(traces) == 2
     assert {trace["source_record_id"] for trace in traces} == {r["source_record_id"] for r in records}
+
+
+def test_prepare_qec_syndromes_stops_on_an_unsafe_member(monkeypatch) -> None:
+    valid = "((0, 1, 0, 1), (1, 0, 0, 0), (1, 1, 1, 0), (0, 0, 1, 1))"
+    csv = f'labels,syndromes,quantity\n0,"{valid}",4\n'
+    data = _zip_bytes({"d-3_pfr-0.001000_nb-10M.csv": csv, "../d-3_pfr-0.002000_nb-10M.csv": csv})
+
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    # the run stops instead of skipping the member, as for google_qec and qasmbench
+    with pytest.raises(RuntimeError, match="unsafe archive member"):
+        prepare_data.prepare_qec_syndromes(client=object(), bucket="bucket", run_id="run-1")
 
 
 def test_prepare_qec_syndromes_flags_quantity_mismatch(monkeypatch) -> None:
