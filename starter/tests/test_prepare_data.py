@@ -51,6 +51,29 @@ def test_prepare_qec_syndromes_writes_valid_rows_and_issues(monkeypatch) -> None
     assert {trace["source_record_id"] for trace in traces} == {r["source_record_id"] for r in records}
 
 
+def test_prepare_qec_syndromes_rejects_non_whole_numbers_instead_of_rounding(monkeypatch) -> None:
+    valid = "((0, 1, 0, 1), (1, 0, 0, 0), (1, 1, 1, 0), (0, 0, 1, 1))"
+    csv = (
+        "labels,syndromes,quantity\n"
+        f'0,"{valid}",4\n'
+        f'1.5,"{valid}",2\n'
+        f'1,"{valid}",2.7\n'
+    )
+    data = _zip_bytes({"d-3_pfr-0.001000_nb-10M.csv": csv})
+
+    monkeypatch.setattr(prepare_data, "get_object_bytes", lambda client, bucket, key: data)
+
+    records, _, issues = prepare_data.prepare_qec_syndromes(client=object(), bucket="bucket", run_id="run-1")
+
+    # only the clean row reaches Silver; 1.5 and 2.7 are not turned into 1 and 2
+    assert [(r["logical_error_label"], r["quantity"]) for r in records] == [(False, 4)]
+    rejected = [issue for issue in issues if issue["rule_id"] == "syndrome_row_validity"]
+    assert len(rejected) == 2
+    assert {issue["action"] for issue in rejected} == {"excluded_from_silver"}
+    assert any("1.5" in issue["observed_value"] for issue in rejected)
+    assert any("2.7" in issue["observed_value"] for issue in rejected)
+
+
 def test_prepare_qec_syndromes_stops_on_an_unsafe_member(monkeypatch) -> None:
     valid = "((0, 1, 0, 1), (1, 0, 0, 0), (1, 1, 1, 0), (0, 0, 1, 1))"
     csv = f'labels,syndromes,quantity\n0,"{valid}",4\n'

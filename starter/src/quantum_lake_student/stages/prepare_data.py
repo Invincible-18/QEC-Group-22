@@ -217,6 +217,13 @@ def parse_syndrome(value: str) -> bytes:
     return bytes(bits)
 
 
+def _whole_number(text: str) -> int:
+    """Parse a value written as a plain integer; reject 1.5, 1e3 or "" instead of rounding."""
+    if not re.fullmatch(r"-?\d+", text.strip()):
+        raise ValueError(f"{text!r} is not a whole number")
+    return int(text)
+
+
 def _fault_rate(csv_name: str) -> float:
     match = re.search(r"_pfr-(?P<rate>\d+(?:\.\d+)?)_", csv_name)
     if match is None:
@@ -265,8 +272,9 @@ def prepare_qec_syndromes(
                 issues.append(data_issue_row(finding, run_id=run_id, action="excluded_from_silver"))
                 continue
 
+            # read as text so no value is converted before it is checked
             with bundle.open(member_name) as source:
-                frame = pd.read_csv(source)
+                frame = pd.read_csv(source, dtype=str, keep_default_na=False)
 
             if set(frame.columns) != {"labels", "syndromes", "quantity"}:
                 finding = QualityFinding(
@@ -335,8 +343,8 @@ def prepare_qec_syndromes(
                     }
                 )
                 try:
-                    label = int(row["labels"])
-                    quantity = int(row["quantity"])
+                    label = _whole_number(row["labels"])
+                    quantity = _whole_number(row["quantity"])
                     if label not in (0, 1):
                         raise ValueError("labels must be 0 or 1")
                     if quantity <= 0:

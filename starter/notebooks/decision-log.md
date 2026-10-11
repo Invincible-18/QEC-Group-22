@@ -139,6 +139,9 @@ exploration only and are not part of the submission.
 
 - The three sources stay in separate Silver tables; no cross-source join is
   justified at this layer.
+- Syndrome CSVs are read as text and labels and quantities must be whole
+  numbers: reading them as numbers first let `int()` silently turn `1.5` into
+  `1`; such a row is now excluded and recorded instead.
 - Syndrome `quantity` is kept as a weight and never expanded into repeated rows
   (70 million represented shots stay 75,598 rows).
 - Syndromes are stored as 16 explicit 0/1 bytes, round by round.

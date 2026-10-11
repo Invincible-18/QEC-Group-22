@@ -125,7 +125,7 @@ The checks, and what happens when one fails:
 | an archive member has an unsafe name | the run stops |
 | the file name contains a fault rate | the file is excluded and recorded |
 | the columns are exactly `labels`, `syndromes`, `quantity` | the file is excluded and recorded |
-| a row's label is 0 or 1, its quantity is above zero and its syndrome is four rounds of four binary values | the row is excluded and recorded |
+| a row's label and quantity are whole numbers (read as text, so `1.5` is rejected, not rounded), the label is 0 or 1, the quantity is above zero and the syndrome is four rounds of four binary values | the row is excluded and recorded |
 | a file's quantities add up to the shot count in its name (within 0.1 %) | the file is kept and the mismatch is flagged |
 
 A quantity mismatch is flagged rather than rejected, because every row in the
